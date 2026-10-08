@@ -1,0 +1,65 @@
+#!/bin/sh
+# pc: actions on the desktop (display :1) for agents. Pixels: screenshot, click, double, move, type, key, scroll;
+# apps: open, tint; any window as text: windows, state, and actions by element number (desk-a11y, pc-ui).
+export DISPLAY=:1
+case "$1" in
+  screenshot) f="${2:-/tmp/screen.png}"; scrot -o -p "$f" && echo "$f" ;;
+  click)  xdotool mousemove "$2" "$3" click "${4:-1}" ;;
+  double) xdotool mousemove "$2" "$3" click --repeat 2 1 ;;
+  move)   xdotool mousemove "$2" "$3" ;;
+  type)   shift; xdotool type --delay 12 -- "$*" ;;
+  key)    shift; xdotool key -- "$@" ;;
+  scroll) n="${4:-3}"; b=5; if [ "$n" -lt 0 ]; then b=4; n=$((-n)); fi; xdotool mousemove "$2" "$3" click --repeat "$n" "$b" ;;
+  tint)   hsetroot -solid "$2" ;;
+  open)   shift
+          # --as <profile> <#rrggbb>: Chromium in the agent's own profile, with a full theme made from its color
+          # (frame, tabs, toolbar, address field and new tab page), loaded as a theme extension.
+          if [ "$1" = "--as" ]; then
+            d="$HOME/.config/chromium-bots/$2"; color="$3"; shift 3
+            mkdir -p "$d/Default" "$d/theme"
+            python3 - "$d/theme/manifest.json" "$color" <<'PY'
+import json, sys
+path, hexc = sys.argv[1], sys.argv[2].lstrip("#")
+base = [int(hexc[i:i + 2], 16) for i in (0, 2, 4)]
+def mix(c, t, f): return [round(c[i] + (t[i] - c[i]) * f) for i in range(3)]
+white, black, ink = [255, 255, 255], [0, 0, 0], [30, 30, 32]
+lum = (0.299 * base[0] + 0.587 * base[1] + 0.114 * base[2]) / 255
+on_frame = ink if lum > 0.6 else white          # inactive tabs' text readable on dark colors
+colors = {
+    "frame": mix(base, white, 0.1), "frame_inactive": mix(base, white, 0.3),
+    "toolbar": mix(base, white, 0.7), "toolbar_button_icon": mix(base, black, 0.5),
+    "tab_text": ink, "tab_background_text": on_frame, "tab_background_text_inactive": on_frame,
+    "omnibox_background": mix(base, white, 0.85), "omnibox_text": ink, "bookmark_text": ink,
+    "ntp_background": mix(base, white, 0.65), "ntp_text": ink, "ntp_link": mix(base, black, 0.4),
+}
+manifest = {"manifest_version": 3, "name": "AgentsCompany", "version": "1." + str(int(hexc, 16)),
+            "theme": {"colors": colors}}
+json.dump(manifest, open(path, "w"))
+PY
+            # The theme loads in a process with no window yet, so the "Installed theme" bubble has nowhere to show
+            # (with --load-extension Chromium installs the theme again in every new process).
+            if ! pgrep -f -- "--user-data-dir=$d( |$)" >/dev/null; then
+              setsid chromium --no-startup-window --user-data-dir="$d" --load-extension="$d/theme" >/dev/null 2>&1 &
+              for i in 1 2 3 4 5 6 7 8 9 10; do [ -e "$d/SingletonSocket" ] && break; sleep 0.3; done; sleep 1
+            fi
+            setsid chromium --user-data-dir="$d" ${1:+"$1"} >/dev/null 2>&1 &
+            exit 0
+          fi
+          case "$1" in
+            terminal) shift; setsid xfce4-terminal --hide-menubar --hide-toolbar --hide-scrollbar "$@" >/dev/null 2>&1 & ;;
+            files)    setsid thunar >/dev/null 2>&1 & ;;
+            ""|browser|chromium) setsid chromium >/dev/null 2>&1 & ;;
+            *)        setsid chromium "$1" >/dev/null 2>&1 & ;;
+          esac ;;
+  # Windows and elements as text. --as <profile>: the agent (its browser and its own numbering of elements).
+  ui|press|set|text|upload|windows|state|close|focus|max|min)
+          a="$1"; shift
+          if [ "$1" = "--as" ]; then DESK_AGENT="$2"; export DESK_AGENT; shift 2; fi
+          exec desk-a11y "$a" "$@" ;;
+  *) cat >&2 <<'USAGE'
+usage: pc windows | state W | ui | press N | set N text | text | upload N file | close|focus|max|min W   [--as profile]
+       pc screenshot [file] | click X Y [button] | double X Y | move X Y | type text | key ctrl+l | scroll X Y N
+       pc open url|terminal|files | open --as profile #rrggbb [url] | tint #rrggbb
+USAGE
+     exit 2 ;;
+esac
