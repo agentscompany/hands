@@ -59,10 +59,12 @@ screen sees where the agent acted.
     desk windows | state W | press N | set N text | text | close|focus|max|min W
     desk ui | upload N file                       the agent's own Chromium page (pages need no state first)
     desk open url|terminal|files                  url: in the agent's own Chromium profile
-    desk screenshot [file] | click X Y | type text | key ctrl+l | scroll X Y N
+    desk screenshot [file] | click X Y | move X Y | type text | key ctrl+l | scroll X Y N
 
 `desk` takes the agent from `DESK_AGENT` (its Chromium profile and its own numbering), keeps screenshots in
-`~/.desk/screens` (the last 20; `DESK_SCREENS` changes it) and writes `~/.desk/last` (`<agent> <unix time>`).
+`~/.desk/screens` (the last 20; `DESK_SCREENS` changes it) and writes `~/.desk/last` (`<agent> <unix time>`), so a
+viewer knows who is using the screen. An `xdotool` shim in `/usr/local/bin` writes it too when an agent (anything with
+`DESK_AGENT` set) runs xdotool directly, then runs the real one.
 `pc` has the same element commands with `--as <profile>` right after the command (`pc state --as alfred files`), plus `double`, `move`,
 `open --as <profile> #rrggbb [url]` (a Chromium profile in a color theme) and `tint #rrggbb` (the desktop's color).
 

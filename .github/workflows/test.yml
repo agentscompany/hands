@@ -5,5 +5,5 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: sh -n pc && sh -n desk && sh -n install.sh
+      - run: sh -n pc && sh -n desk && sh -n install.sh && sh -n xdotool
       - run: python3 test_desk_a11y.py
