@@ -4,6 +4,9 @@
 # The agent is DESK_AGENT, or --as <profile> right after the command: its own Chromium profile, its own numbering of
 # elements, and ~/.desk/last ("<agent> <unix time>"), which tells whoever watches the screen who is using it.
 export DISPLAY=:1
+# A viewer's screen page glides the agent's cursor to where the pointer went: actions wait for it to arrive, so the
+# click is seen where and when it happens (hands-a11y and pc-ui wait the same).
+WAIT=0.4
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 color=""
 if [ "${1:-}" = "--as" ]; then   # open --as <profile> <#rrggbb>: the profile's theme color too
@@ -60,12 +63,12 @@ case "$cmd" in
     scrot -o -p "$f" || exit
     echo "$f"
     ls -t "$d"/*.png 2>/dev/null | tail -n +21 | xargs -r rm -f ;;
-  click)  xdotool mousemove "$1" "$2" click "${3:-1}" ;;
-  double) xdotool mousemove "$1" "$2" click --repeat 2 1 ;;
+  click)  xdotool mousemove "$1" "$2" && sleep $WAIT && xdotool click "${3:-1}" ;;
+  double) xdotool mousemove "$1" "$2" && sleep $WAIT && xdotool click --repeat 2 1 ;;
   move)   xdotool mousemove "$1" "$2" ;;
   type)   xdotool type --delay 12 -- "$*" ;;
   key)    xdotool key -- "$@" ;;
-  scroll) n="${3:-3}"; b=5; if [ "$n" -lt 0 ]; then b=4; n=$((-n)); fi; xdotool mousemove "$1" "$2" click --repeat "$n" "$b" ;;
+  scroll) n="${3:-3}"; b=5; if [ "$n" -lt 0 ]; then b=4; n=$((-n)); fi; xdotool mousemove "$1" "$2" && sleep $WAIT && xdotool click --repeat "$n" "$b" ;;
   tint)   hsetroot -solid "$1" ;;
   open)   case "${1:-}" in
             terminal) shift; setsid xfce4-terminal --hide-menubar --hide-toolbar --hide-scrollbar "$@" >/dev/null 2>&1 & ;;

@@ -38,3 +38,10 @@ d.LIMIT = 2
 lines, paths = d.number(tree, lambda o: o)
 assert len(paths) == 2 and lines[-1] == "(only the first 2 elements)", lines
 print("hands-a11y: ok")
+
+# The title bar's buttons: openbox (frame extents top 26; wmctrl's y is one title bar low) and Chromium's own.
+term = {"x": 250, "y": 199, "w": 772, "h": 477}
+assert d.title_button(term, "close", 26) == (1006, 160) and d.title_button(term, "min", 26) == (964, 160), d.title_button(term, "close", 26)
+chrome = {"x": 52, "y": 36, "w": 1177, "h": 648}
+assert d.title_button(chrome, "close", 0) == (1208, 56) and d.title_button(chrome, "max", 0) == (1176, 56)
+print("title buttons: ok")

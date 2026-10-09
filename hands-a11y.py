@@ -78,8 +78,24 @@ def show(w, n):
     return f'[{n}] {w["app"]} "{w["title"]}" {w["w"]}x{w["h"]}' + (" (focused)" if w["focused"] else "")
 
 
-def point(x, y):  # the real pointer goes where the agent acts: viewers draw the agent's cursor there
-    run("xdotool", "mousemove", str(int(x)), str(int(y)))
+WAIT = 0.4  # seconds: a viewer's cursor glides to the pointer; the action comes once it is there (as hands)
+
+
+def point(x, y):  # the real pointer goes exactly where the agent acts, and the action waits for viewers to see it
+    run("xdotool", "mousemove", str(round(x)), str(round(y)))
+    time.sleep(WAIT)
+
+
+def title_button(w, what, top):
+    """Where a window's close/max/min button (or its title bar, for focus) is, in screen pixels. Openbox draws the
+    title bar (top = its _NET_FRAME_EXTENTS top; wmctrl reports y one title bar too low there): buttons from the
+    right edge, close, maximize, iconify, 21 px apart. Chromium draws its own (no frame extents): 52 px apart."""
+    right, step, y, first = w["x"] + w["w"], 21, w["y"] - 1.5 * top, 16
+    if not top:
+        step, y, first = 32, w["y"] + 20, 21
+    if what == "focus":
+        return w["x"] + w["w"] / 2, y
+    return right - first - step * {"close": 0, "max": 1, "min": 2}[what], y
 
 
 # --- the accessibility tree (AT-SPI) ---
@@ -169,11 +185,10 @@ def center(o):
     return e.x + e.width / 2, e.y + e.height / 2
 
 
-def click(st, o):  # no accessible action: bring the window up and click the element's center
-    x, y = center(o)
+def click(st, o):  # no accessible action: bring the window up and click the element's center (the pointer is there)
     run("wmctrl", "-ia", hex(st["window"]))
     time.sleep(0.2)
-    run("xdotool", "mousemove", str(int(x)), str(int(y)), "click", "1")
+    run("xdotool", "click", "1")
 
 
 # --- commands ---
@@ -275,7 +290,12 @@ def text():
 
 def window_action(what, arg):
     w = find_window(arg)
-    point(w["x"] + w["w"] / 2, w["y"] + 12)
+    ext = run("xprop", "-id", str(w["id"]), "_NET_FRAME_EXTENTS")   # "_NET_FRAME_EXTENTS(CARDINAL) = 0, 0, 26, 0"
+    top = int(ext.split("=")[1].split(",")[2]) if "=" in ext else 0
+    if what != "focus" and not w["focused"]:   # as a person would: bring it up, so its button can be seen
+        run("wmctrl", "-ia", hex(w["id"]))
+        time.sleep(0.2)
+    point(*title_button(w, what, top))
     if what == "close":
         run("wmctrl", "-ic", hex(w["id"]))
     elif what == "focus":

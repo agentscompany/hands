@@ -160,8 +160,10 @@ def center(c, n):
     if not r:
         raise SystemExit(f"no element {n}: did the page change? run ui again")
     if os.environ.get("DESK_AGENT"):  # viewers draw the agent's cursor where the pointer is: move it to the element
-        sx, sy = c.js("[screenX, screenY + outerHeight - innerHeight]")
-        subprocess.run(["xdotool", "mousemove", str(int(sx + r[0])), str(int(sy + r[1]))], env={**os.environ, "DISPLAY": ":1"})
+        # the page's origin on the screen: the window's, past its side border and the toolbars above the page
+        sx, sy = c.js("[screenX + (outerWidth - innerWidth) / 2, screenY + outerHeight - innerHeight - (outerWidth - innerWidth) / 2]")
+        subprocess.run(["xdotool", "mousemove", str(round(sx + r[0])), str(round(sy + r[1]))], env={**os.environ, "DISPLAY": ":1"})
+        time.sleep(0.4)   # viewers' cursor glides there first (as hands)
     return r
 
 
