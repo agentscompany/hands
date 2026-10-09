@@ -1,30 +1,3 @@
 #!/bin/sh
-# desk: pc for an agent (DESK_AGENT names it: its own browser profile and numbering). Everything stays in the home
-# (harnesses read their working directory without asking): screenshots in ~/.desk/screens (the last 20 are kept, or
-# DESK_SCREENS), and ~/.desk/last says which agent used the screen last and when (a viewer can draw its cursor).
-p="${DESK_AGENT:-desk}"
-case "$1" in screenshot|click|move|type|key|scroll|open|ui|press|set|text|upload|windows|state|close|focus|max|min)
-  mkdir -p ~/.desk && echo "$p $(date +%s)" > ~/.desk/last
-  export DESK_MARKED=1 ;; esac   # the xdotool shim need not mark it again
-case "$1" in
-  screenshot) d="${DESK_SCREENS:-$HOME/.desk/screens}"; mkdir -p "$d"
-              pc screenshot "${2:-$d/$p-$(date +%Y%m%d-%H%M%S-%3N).png}" || exit
-              ls -t "$d"/*.png 2>/dev/null | tail -n +21 | xargs -r rm -f ;;
-  click|move|type|key|scroll) exec pc "$@" ;;
-  open) shift
-        case "$1" in terminal|files) exec pc open "$@" ;; esac
-        exec pc open --as "$p" "#c9d4e6" "$@" ;;
-  ui|press|set|text|upload|windows|state|close|focus|max|min) DESK_AGENT="$p" exec desk-a11y "$@" ;;
-  *) cat >&2 <<'USAGE'
-usage: desk windows                    the windows, numbered
-       desk state W                   window W's elements, numbered, and a screenshot of it (W: number or app name)
-       desk press N | set N TEXT | text   act on element N of the last state (or ui); text: the window's text
-       desk close|focus|max|min W
-       desk ui                        your browser's page as text, elements numbered; desk upload N FILE
-       desk open URL|terminal|files   a page in your browser, a terminal or the file manager
-       desk screenshot [file]         the whole screen as PNG (default: ~/.desk/screens), prints its path
-       desk click X Y [button]        desk move X Y         desk type TEXT         desk key ctrl+l
-       desk scroll X Y N (N < 0: up)
-USAGE
-     exit 2 ;;
-esac
+# desk: the old name of hands for one agent (DESK_AGENT; "desk" if unset).
+DESK_AGENT="${DESK_AGENT:-desk}" exec hands "$@"

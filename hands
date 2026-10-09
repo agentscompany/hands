@@ -1,0 +1,89 @@
+#!/bin/sh
+# hands: computer use for agents on a Linux desktop (display :1). Windows and their elements as text (hands-a11y:
+# AT-SPI, and pc-ui for Chromium pages), actions by element number, window actions, and pixels.
+# The agent is DESK_AGENT, or --as <profile> right after the command: its own Chromium profile, its own numbering of
+# elements, and ~/.desk/last ("<agent> <unix time>"), which tells whoever watches the screen who is using it.
+export DISPLAY=:1
+cmd="${1:-}"; [ $# -gt 0 ] && shift
+color=""
+if [ "${1:-}" = "--as" ]; then   # open --as <profile> <#rrggbb>: the profile's theme color too
+  DESK_AGENT="$2"; shift 2
+  if [ "$cmd" = open ]; then color="$1"; shift; fi
+fi
+a="${DESK_AGENT:-}"
+export DESK_AGENT
+
+case "$cmd" in screenshot|click|double|move|type|key|scroll|open|ui|press|set|text|upload|windows|state|close|focus|max|min)
+  if [ -n "$a" ]; then
+    mkdir -p "$HOME/.desk" && echo "$a $(date +%s)" > "$HOME/.desk/last"
+    export DESK_MARKED=1   # the xdotool shim need not mark it again
+  fi ;; esac
+
+# Chromium in the agent's own profile, with a full theme made from its color (frame, tabs, toolbar, address field and
+# new tab page), loaded as a theme extension.
+profile() {
+  d="$HOME/.config/chromium-bots/$a"
+  mkdir -p "$d/Default" "$d/theme"
+            python3 - "$d/theme/manifest.json" "${color:-#c9d4e6}" <<'PY'
+import json, sys
+path, hexc = sys.argv[1], sys.argv[2].lstrip("#")
+base = [int(hexc[i:i + 2], 16) for i in (0, 2, 4)]
+def mix(c, t, f): return [round(c[i] + (t[i] - c[i]) * f) for i in range(3)]
+white, black, ink = [255, 255, 255], [0, 0, 0], [30, 30, 32]
+lum = (0.299 * base[0] + 0.587 * base[1] + 0.114 * base[2]) / 255
+on_frame = ink if lum > 0.6 else white          # inactive tabs' text readable on dark colors
+colors = {
+    "frame": mix(base, white, 0.1), "frame_inactive": mix(base, white, 0.3),
+    "toolbar": mix(base, white, 0.7), "toolbar_button_icon": mix(base, black, 0.5),
+    "tab_text": ink, "tab_background_text": on_frame, "tab_background_text_inactive": on_frame,
+    "omnibox_background": mix(base, white, 0.85), "omnibox_text": ink, "bookmark_text": ink,
+    "ntp_background": mix(base, white, 0.65), "ntp_text": ink, "ntp_link": mix(base, black, 0.4),
+}
+manifest = {"manifest_version": 3, "name": "AgentsCompany", "version": "1." + str(int(hexc, 16)),
+            "theme": {"colors": colors}}
+json.dump(manifest, open(path, "w"))
+PY
+  # The theme loads in a process with no window yet, so the "Installed theme" bubble has nowhere to show
+  # (with --load-extension Chromium installs the theme again in every new process).
+  if ! pgrep -f -- "--user-data-dir=$d( |$)" >/dev/null; then
+    setsid chromium --no-startup-window --user-data-dir="$d" --load-extension="$d/theme" >/dev/null 2>&1 &
+    for i in 1 2 3 4 5 6 7 8 9 10; do [ -e "$d/SingletonSocket" ] && break; sleep 0.3; done; sleep 1
+  fi
+  setsid chromium --user-data-dir="$d" ${1:+"$1"} >/dev/null 2>&1 &
+}
+
+case "$cmd" in
+  screenshot)
+    if [ -n "${1:-}" ]; then scrot -o -p "$1" && echo "$1"; exit; fi
+    d="${DESK_SCREENS:-$HOME/.desk/screens}"; mkdir -p "$d"   # the last 20 are kept
+    f="$d/${a:-screen}-$(date +%Y%m%d-%H%M%S-%3N).png"
+    scrot -o -p "$f" || exit
+    echo "$f"
+    ls -t "$d"/*.png 2>/dev/null | tail -n +21 | xargs -r rm -f ;;
+  click)  xdotool mousemove "$1" "$2" click "${3:-1}" ;;
+  double) xdotool mousemove "$1" "$2" click --repeat 2 1 ;;
+  move)   xdotool mousemove "$1" "$2" ;;
+  type)   xdotool type --delay 12 -- "$*" ;;
+  key)    xdotool key -- "$@" ;;
+  scroll) n="${3:-3}"; b=5; if [ "$n" -lt 0 ]; then b=4; n=$((-n)); fi; xdotool mousemove "$1" "$2" click --repeat "$n" "$b" ;;
+  tint)   hsetroot -solid "$1" ;;
+  open)   case "${1:-}" in
+            terminal) shift; setsid xfce4-terminal --hide-menubar --hide-toolbar --hide-scrollbar "$@" >/dev/null 2>&1 & ;;
+            files)    setsid thunar >/dev/null 2>&1 & ;;
+            ""|browser|chromium) if [ -n "$a" ]; then profile ""; else setsid chromium >/dev/null 2>&1 & fi ;;
+            *)        if [ -n "$a" ]; then profile "$1"; else setsid chromium "$1" >/dev/null 2>&1 & fi ;;
+          esac ;;
+  ui|press|set|text|upload|windows|state|close|focus|max|min) exec hands-a11y "$cmd" "$@" ;;
+  *) cat >&2 <<'USAGE'
+usage: hands windows                     the windows, numbered
+       hands state W                     window W's elements, numbered, and a screenshot of it (W: number or app name)
+       hands press N | set N TEXT | text   act on element N of the last state (or ui); text: the window's text
+       hands close|focus|max|min W
+       hands ui                          your browser's page as text, elements numbered; hands upload N FILE
+       hands open URL|terminal|files     a page in your own browser, a terminal or the file manager
+       hands screenshot [file]           the whole screen as PNG (default: ~/.desk/screens), prints its path
+       hands click X Y [button] | double X Y | move X Y | type TEXT | key ctrl+l | scroll X Y N (N < 0: up) | tint #rrggbb
+       --as <profile> after the command names the agent (else DESK_AGENT); open --as <profile> <#rrggbb> [url]
+USAGE
+     exit 2 ;;
+esac

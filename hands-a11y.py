@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""desk windows | state W | ui | press N | set N TEXT | text | upload N FILE | close|focus|max|min W
+"""hands windows | state W | ui | press N | set N TEXT | text | upload N FILE | close|focus|max|min W
 
-Any window of the desktop as text, for agents (`desk` and `pc` run this):
-  desk windows            the windows, numbered: [2] thunar "ac - Thunar" 900x560 (focused)
-  desk state W            one window's elements, numbered, and a screenshot of just that window (brought to the
-                          front). W: a number from `desk windows`, or a word of its app or title (chromium, terminal…)
-  desk press N            press element N of the last `state` (or `ui`); desk set N TEXT writes into it
-  desk text               the text of the last window (a terminal's output, a page's text)
-  desk close|focus|max|min W
+Any window of the desktop as text, for agents (`hands` runs this):
+  hands windows            the windows, numbered: [2] thunar "ac - Thunar" 900x560 (focused)
+  hands state W            one window's elements, numbered, and a screenshot of just that window (brought to the
+                          front). W: a number from `hands windows`, or a word of its app or title (chromium, terminal…)
+  hands press N            press element N of the last `state` (or `ui`); hands set N TEXT writes into it
+  hands text               the text of the last window (a terminal's output, a page's text)
+  hands close|focus|max|min W
 Chromium pages go through pc-ui (its debugging protocol); every other app through AT-SPI, the Linux accessibility
 bus. Actions use accessibility when the app offers one (the window need not be in front) and otherwise focus the
 window and click the element's center; either way the pointer moves there, so a viewer sees where the agent acted.
@@ -61,17 +61,17 @@ def windows():
 
 
 def find_window(arg, ws=None):
-    """A number from the last `desk windows`, or a word of an app or title."""
+    """A number from the last `hands windows`, or a word of an app or title."""
     if arg.isdigit():
         ws = ws or load("windows.json") or windows()
         if 1 <= int(arg) <= len(ws):
             return ws[int(arg) - 1]
     else:
-        arg = {"files": "thunar", "browser": "chromium"}.get(arg.lower(), arg)  # the names `desk open` uses
+        arg = {"files": "thunar", "browser": "chromium"}.get(arg.lower(), arg)  # the names `hands open` uses
         for w in ws or windows():
             if arg.lower() in w["app"].lower() or arg.lower() in w["title"].lower():
                 return w
-    raise SystemExit(f"no window {arg!r}: run desk windows")
+    raise SystemExit(f"no window {arg!r}: run hands windows")
 
 
 def show(w, n):
@@ -142,7 +142,7 @@ def frame_of(w):
                 return [i, j], fr
         if frames:
             return [i, 0], frames[0]
-    raise SystemExit(f'{w["app"]} does not expose its window to accessibility: use desk screenshot and desk click')
+    raise SystemExit(f'{w["app"]} does not expose its window to accessibility: use hands screenshot and hands click')
 
 
 def element(n):
@@ -159,7 +159,7 @@ def element(n):
     except Exception:
         o = None
     if o is None:
-        raise SystemExit(f"element {n} is gone: the window changed, run desk state again")
+        raise SystemExit(f"element {n} is gone: the window changed, run hands state again")
     return st, o
 
 
@@ -192,7 +192,7 @@ def chromium_profile(w):  # the Chromium profile (pc open --as) a window belongs
         m = re.match(r"--user-data-dir=.*/chromium-bots/([^/]+)$", a)
         if m:
             return m.group(1)
-    raise SystemExit("this Chromium window is not an agent's browser: open your own with desk open URL")
+    raise SystemExit("this Chromium window is not an agent's browser: open your own with hands open URL")
 
 
 def state(arg):
@@ -213,7 +213,7 @@ def state(arg):
     root, fr = frame_of(w)
     lines, paths = number(fr, facts)
     save("state.json", {"kind": "atspi", "window": w["id"], "root": root, "paths": paths})
-    print("\n".join(lines) or "(no elements: use the screenshot, desk click and desk type)")
+    print("\n".join(lines) or "(no elements: use the screenshot, hands click and hands type)")
 
 
 def press(n):
@@ -266,7 +266,7 @@ def text():
 
     w = next((w for w in windows() if w["id"] == st["window"]), None)
     if not w:
-        raise SystemExit("that window is closed: run desk windows")
+        raise SystemExit("that window is closed: run hands windows")
     _, fr = frame_of(w)
     walk(fr, 0)
     t = re.sub(r"\n\s*\n+", "\n", "\n".join(x for x in out if x and x.strip())).strip()

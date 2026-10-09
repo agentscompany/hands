@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """pc-ui ui | press N | set N "text" | text | upload N file — an agent's Chromium page as text, and actions by number.
 
-Talks to the Chromium of the agent's profile (~/.config/chromium-bots/<profile>, opened by `pc open --as`) through
+Talks to the Chromium of the agent's profile (~/.config/chromium-bots/<profile>, opened by `hands open --as`) through
 its debugging protocol (CDP), on the port it writes to <profile>/DevToolsActivePort (Chromium must run with
 --remote-debugging-port=0). Standard library only.
 
@@ -146,7 +146,7 @@ def tab(profile):
         port = open(os.path.join(d, "DevToolsActivePort")).readline().strip()
         pages = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=5))
     except (OSError, ValueError):
-        raise SystemExit("this agent's browser is not open (or opened before it supported this): open it with pc open --as")
+        raise SystemExit("this agent's browser is not open (or opened before it supported this): open it with hands open --as")
     pages = [p for p in pages if p.get("type") == "page" and not p.get("url", "").startswith("chrome-extension://")]
     if not pages:
         raise SystemExit("no tab open: open one with pc open --as")

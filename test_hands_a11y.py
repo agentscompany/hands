@@ -1,7 +1,7 @@
-# python3 test_desk_a11y.py: the window list and the numbering of the accessibility tree (no desktop needed).
+# python3 test_hands_a11y.py: the window list and the numbering of the accessibility tree (no desktop needed).
 import importlib.util, sys
 
-spec = importlib.util.spec_from_file_location("desk_a11y", "desk-a11y.py")
+spec = importlib.util.spec_from_file_location("hands_a11y", "hands-a11y.py")
 d = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(d)
 
@@ -37,4 +37,4 @@ assert paths == [[0, 0, 0], [0, 2], [1, 1], [1, 4], [3]], paths
 d.LIMIT = 2
 lines, paths = d.number(tree, lambda o: o)
 assert len(paths) == 2 and lines[-1] == "(only the first 2 elements)", lines
-print("desk-a11y: ok")
+print("hands-a11y: ok")
