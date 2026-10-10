@@ -6,11 +6,11 @@ DevTools protocol). handsd runs these commands in a long-lived process (open con
 when it cannot, `hands` runs this file directly with the same commands: python3 hands_a11y.py <command> [args].
 DESK_AGENT names the agent (its browser profile and its own numbering); DESK_SCREENS is where screenshots go.
 """
-import collections, glob, json, os, re, subprocess, sys, threading, time
+import collections, contextlib, glob, json, os, re, subprocess, sys, threading, time
 
 import hands_cdp as C
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 HOME = os.path.expanduser("~/.desk")
 LIMIT = 150  # elements per state, like hands_cdp
 os.environ["DISPLAY"] = ":1"
@@ -29,7 +29,9 @@ USAGE = """usage: hands windows                     the windows, numbered
        hands eval "JS"                   run JavaScript in the page (powerful: the page's data and actions)
        hands downloads | network | pdf FILE
        hands open URL|terminal|files|app NAME   a page in your own browser, a terminal, the file manager, an app
-       hands screenshot [file] | click X Y [button] | double X Y | move X Y | type TEXT | key ctrl+l | scroll X Y N
+       hands type TEXT | key ctrl+a Return       into your page (after ui, press or set on it), else the screen
+       hands scroll N                    your page (negative scrolls up); scroll X Y N: the screen
+       hands screenshot [file] | click X Y [button] | double X Y | move X Y
        --as <profile> after the command names the agent (else DESK_AGENT); open --as <profile> <#rrggbb> [url]"""
 
 
@@ -76,6 +78,7 @@ class Session:
     def __init__(self, agent, named=True):
         self.agent, self.named = agent, named
         self.last, self.windows, self.scopes = None, None, {}
+        self.keys_to_screen = True   # type and key go to the screen, or (False) to the page the agent last used
         self.screens = os.path.join(HOME, "screens")
         self.cwd = os.getcwd()
 
@@ -185,13 +188,94 @@ def show(w, n):
     return f'[{n}] {w["app"]} "{w["title"]}" {w["w"]}x{w["h"]}' + (" (focused)" if w["focused"] else "")
 
 
-WAIT = 0.4  # seconds: a viewer's cursor glides to the pointer; the action comes once it is there
+WAIT = 0.4  # seconds: a viewer's cursor glides to where the agent acts; the action comes once it is there
+TURN_WAIT = 20  # seconds an action that needs the real pointer or keyboard waits for its turn
+CURSORS = os.path.join(HOME, "cursors.json")
+_cursors = threading.Lock()
 
 
-def point(s, x, y):  # the real pointer goes exactly where the agent acts, and the action waits for viewers to see it
-    run_("xdotool", "mousemove", str(round(x)), str(round(y)))
+def mark(s, x=None, y=None, acting=None):
+    """Notes in ~/.desk/cursors.json that the agent is using the screen: when, its virtual cursor (where it acts, in
+    screen pixels) and whether it is acting there now. Viewers draw one cursor per agent from it; no real pointer
+    moves for actions that need none, so agents act in parallel."""
+    if not s.named:
+        return
+    with _cursors:
+        try:
+            cur = json.load(open(CURSORS))
+        except (OSError, ValueError):
+            cur = {}
+        now = time.time()
+        cur = {a: c for a, c in cur.items() if now - c.get("t", 0) < 600}
+        c = cur.setdefault(s.agent, {"x": None, "y": None, "acting": False})
+        if x is not None:
+            c["x"], c["y"] = round(x), round(y)
+        if acting is not None:
+            c["acting"] = acting
+        c["t"] = round(now, 2)
+        os.makedirs(HOME, exist_ok=True)
+        tmp = f"{CURSORS}.{os.getpid()}"
+        with open(tmp, "w") as f:
+            json.dump(cur, f)
+        os.replace(tmp, CURSORS)
+
+
+@contextlib.contextmanager
+def aim(s, x, y, real=False):
+    """The agent's cursor goes to (x, y) and the action waits for viewers to see it arrive. real: the X pointer goes
+    there too (only with the turn: see Turn)."""
+    mark(s, x, y, True)
+    if real:
+        run_("xdotool", "mousemove", str(round(x)), str(round(y)))
     if s.named:
         time.sleep(WAIT)
+    try:
+        yield
+    finally:
+        mark(s, acting=False)
+
+
+def user_control():
+    """The person watching took over the screen (their screen page keeps ~/.desk/control fresh while they have it)."""
+    try:
+        return time.time() - os.path.getmtime(os.path.join(HOME, "control")) < 30
+    except OSError:
+        return False
+
+
+class Turn:
+    """The real pointer and keyboard (X has one of each): one agent at a time, the others wait in order, up to
+    TURN_WAIT seconds. Holds are one action long. Nobody's turn comes while the person watching has control.
+    Page actions (CDP) and accessible actions need no turn."""
+
+    def __init__(self):
+        self.cv, self.queue = threading.Condition(), collections.deque()
+
+    @contextlib.contextmanager
+    def __call__(self, s):
+        me = object()
+        end = time.time() + TURN_WAIT
+        with self.cv:
+            self.queue.append(me)
+            while self.queue[0] is not me or user_control():
+                if time.time() > end:
+                    self.queue.remove(me)
+                    self.cv.notify_all()
+                    if user_control():
+                        raise SystemExit("the person watching has taken over the screen: wait until they hand it "
+                                         "back, then try again (page commands still work)")
+                    raise SystemExit(f"other agents kept the screen's pointer and keyboard busy for {TURN_WAIT} s: try "
+                                     "again (page commands, and press and set on most apps, need no turn)")
+                self.cv.wait(0.2)   # control is a file: look again now and then
+        try:
+            yield
+        finally:
+            with self.cv:
+                self.queue.remove(me)
+                self.cv.notify_all()
+
+
+turn = Turn()
 
 
 def title_button(w, what, top):
@@ -207,12 +291,14 @@ def title_button(w, what, top):
 
 
 def screenshot(s, w):
-    """A screenshot of just this window (brought to the front: X has no pixels for its covered parts)."""
+    """A screenshot of just this window (brought to the front, in the agent's turn: X has no pixels for its covered
+    parts)."""
     os.makedirs(s.screens, exist_ok=True)
     shot = os.path.join(s.screens, f"{s.agent}-{time.strftime('%Y%m%d-%H%M%S')}-{w['app']}.png")
-    run_("wmctrl", "-ia", hex(w["id"]))
-    time.sleep(0.3)
-    run_("scrot", "-o", "-w", str(w["id"]), shot)
+    with turn(s):
+        run_("wmctrl", "-ia", hex(w["id"]))
+        time.sleep(0.3)
+        run_("scrot", "-o", "-w", str(w["id"]), shot)
     for old in sorted(glob.glob(os.path.join(s.screens, "*.png")), key=os.path.getmtime)[:-20]:   # the last 20
         os.remove(old)
     return shot
@@ -341,7 +427,7 @@ def center(o):
     return e.x + e.width / 2, e.y + e.height / 2
 
 
-def click(st, o):  # no accessible action: bring the window up and click the element's center (the pointer is there)
+def click(st):  # no accessible action: bring the window up and click where the pointer is (in the agent's turn)
     run_("wmctrl", "-ia", hex(st["window"]))
     time.sleep(0.2)
     run_("xdotool", "click", "1")
@@ -370,17 +456,18 @@ def page_view(s, b, tid, head, changes, own, window=None):
     out = view(s, ("cdp", b.port, tid, snap["doc"]), (head + "\n" if head else "") + snap["head"], snap["items"], changes)
     s.last = {"kind": "cdp", "port": b.port, "tid": tid, "doc": snap["doc"], "own": own, "window": window,
               "refs": s.ids(("cdp", b.port, tid, snap["doc"])).refs}
+    s.keys_to_screen = False
     return out
 
 
 def page_element(s, n):
+    """Element n of the agent's last page, scrolled into view: its center in the page and on the screen."""
     st, key = element(s, n)
     b = C.browser(st["port"])
     x, y, tag = C.find(b, st["tid"], st["doc"], key)
-    if s.named:   # viewers draw the agent's cursor where the pointer is: move it to the element first
-        sx, sy = C.screen_origin(b, st["tid"])
-        point(s, sx + x, sy + y)
-    return b, st, key, x, y, tag
+    sx, sy = C.screen_origin(b, st["tid"]) if s.named else (0, 0)
+    s.keys_to_screen = False
+    return b, st, key, x, y, tag, (sx + x, sy + y)
 
 
 # --- commands ---
@@ -394,6 +481,7 @@ def state(s, arg, changes=False, shot=False):
     if port:
         b = C.browser(port)
         return page_view(s, b, C.window_page(b, w["title"]), head, changes, own=False, window=w["id"])
+    s.keys_to_screen = True
     with ATSPI:
         fr = frame_of(w)
         if fr is None:
@@ -422,45 +510,49 @@ def state(s, arg, changes=False, shot=False):
 
 
 def press(s, n):
-    if (s.last or {}).get("kind") == "cdp":
-        b, st, _, x, y, _ = page_element(s, n)
-        C.click(b, st["tid"], x, y)
+    if (s.last or {}).get("kind") == "cdp":   # through the page's own input: no real pointer, no turn
+        b, st, _, x, y, _, at = page_element(s, n)
+        with aim(s, *at):
+            C.click(b, st["tid"], x, y)
         d = b.dialogs.get(st["tid"])
         return "ok" + (f"; {C.dialog_text(d)}" if d else "")
     st, o = element(s, n)
     with ATSPI:
         c = center(o)
-    point(s, *c)   # other agents may use AT-SPI while this one's pointer travels
-    with ATSPI:
         f = facts(o)
         # A row's accessible actions edit or expand it: a click selects it, as for a person (then Return opens it).
         act = o.queryAction() if f["actions"] and f["role"] not in ("table cell", "tree item", "list item") else None
-        for want in ("click", "press", "activate", "toggle", "jump", None):
-            if act and (want in f["actions"] or want is None):
-                act.doAction(f["actions"].index(want) if want else 0)
-                break
-        else:
-            click(st, o)
+    if not act:   # a real click: the real pointer, in the agent's turn
+        with turn(s), aim(s, *c, real=True):
+            click(st)
+        return "ok"
+    with aim(s, *c):   # the accessible action: no pointer (other agents may use AT-SPI while this one's cursor travels)
+        with ATSPI:
+            want = next((w for w in ("click", "press", "activate", "toggle", "jump") if w in f["actions"]), None)
+            act.doAction(f["actions"].index(want) if want else 0)
     return "ok"
 
 
 def set_text(s, n, text):
     if (s.last or {}).get("kind") == "cdp":
-        b, st, key, x, y, tag = page_element(s, n)
-        if tag != "SELECT":
-            C.click(b, st["tid"], x, y)
-        C.set_value(b, st["tid"], st["doc"], key, tag, text)
+        b, st, key, x, y, tag, at = page_element(s, n)
+        with aim(s, *at):
+            if tag != "SELECT":
+                C.click(b, st["tid"], x, y)
+            C.set_value(b, st["tid"], st["doc"], key, tag, text)
         return "ok"
     st, o = element(s, n)
     with ATSPI:
         c = center(o)
-    point(s, *c)
-    with ATSPI:
-        if facts(o)["editable"]:
+        editable = facts(o)["editable"]
+    if editable:
+        with aim(s, *c), ATSPI:
             o.queryEditableText().setTextContents(text)
-            return "ok"
-    click(st, o)   # a terminal, or anything else that takes keys
-    run_("xdotool", "type", "--delay", "12", "--", text)
+        return "ok"
+    with turn(s), aim(s, *c, real=True):   # a terminal, or anything else that takes keys: click it and type
+        click(st)
+        run_("xdotool", "type", "--delay", "12", "--", text)
+    s.keys_to_screen = True
     return "ok"
 
 
@@ -503,18 +595,21 @@ def window_action(s, what, arg):
     w = find_window(arg, s=s)
     ext = run_("xprop", "-id", str(w["id"]), "_NET_FRAME_EXTENTS")   # "_NET_FRAME_EXTENTS(CARDINAL) = 0, 0, 26, 0"
     top = int(ext.split("=")[1].split(",")[2]) if "=" in ext else 0
-    if what != "focus" and not w["focused"]:   # as a person would: bring it up, so its button can be seen
-        run_("wmctrl", "-ia", hex(w["id"]))
-        time.sleep(0.2)
-    point(s, *title_button(w, what, top))
-    if what == "close":
-        run_("wmctrl", "-ic", hex(w["id"]))
-    elif what == "focus":
-        run_("wmctrl", "-ia", hex(w["id"]))
-    elif what == "max":
-        run_("wmctrl", "-ir", hex(w["id"]), "-b", "add,maximized_vert,maximized_horz")
-    else:
-        run_("xdotool", "windowminimize", str(w["id"]))
+    with turn(s):   # it changes what is in front and has the keyboard
+        if what != "focus" and not w["focused"]:   # as a person would: bring it up, so its button can be seen
+            run_("wmctrl", "-ia", hex(w["id"]))
+            time.sleep(0.2)
+        with aim(s, *title_button(w, what, top)):
+            if what == "close":
+                run_("wmctrl", "-ic", hex(w["id"]))
+            elif what == "focus":
+                run_("wmctrl", "-ia", hex(w["id"]))
+            elif what == "max":
+                run_("wmctrl", "-ir", hex(w["id"]), "-b", "add,maximized_vert,maximized_horz")
+            else:
+                run_("xdotool", "windowminimize", str(w["id"]))
+    if what == "focus":
+        s.keys_to_screen = True
     return "ok"
 
 
@@ -533,6 +628,62 @@ def tab(s, rest):
         raise SystemExit(USAGE)
     st = s.last or {}
     s.last = {"kind": "cdp", "port": b.port, "tid": tid, "doc": None, "own": st.get("own", True), "refs": {}}
+    s.keys_to_screen = False
+    return "ok"
+
+
+def pointer(s, cmd, rest):
+    """click, double, move, scroll X Y: screen pixels, with the real pointer, in the agent's turn."""
+    try:
+        x, y = int(rest[0]), int(rest[1])
+        n = int(rest[2]) if cmd == "scroll" and len(rest) > 2 else 3
+    except ValueError:
+        raise SystemExit(USAGE)
+    with turn(s), aim(s, x, y, real=True):
+        if cmd == "click":
+            run_("xdotool", "click", rest[2] if len(rest) > 2 else "1")
+        elif cmd == "double":
+            run_("xdotool", "click", "--repeat", "2", "1")
+        elif cmd == "scroll":
+            run_("xdotool", "click", "--repeat", str(abs(n)), "4" if n < 0 else "5")
+    if cmd in ("click", "double"):
+        s.keys_to_screen = True
+    return ""
+
+
+def keyboard(s, cmd, rest):
+    """type and key: into the agent's page through its own input (after ui, press or set on it; no turn), else into
+    whatever has the screen's keyboard (in the agent's turn)."""
+    if not s.keys_to_screen and (s.last or {}).get("kind") == "cdp":
+        b, tid = page(s)
+        mark(s, acting=True)
+        try:
+            if cmd == "type":
+                C.type_text(b, tid, " ".join(rest))
+            else:
+                for k in rest:
+                    C.key(b, tid, k)
+        finally:
+            mark(s, acting=False)
+        return ""
+    with turn(s):
+        mark(s, acting=True)
+        try:
+            if cmd == "type":
+                run_("xdotool", "type", "--delay", "12", "--", " ".join(rest))
+            else:
+                run_("xdotool", "key", "--", *rest)
+        finally:
+            mark(s, acting=False)
+    return ""
+
+
+def page_scroll(s, n):
+    """Scrolls the agent's page n notches (negative: up) with the mouse wheel at its middle; no real pointer."""
+    b, tid = page(s)
+    w, h, sx, sy = b.js(tid, "[innerWidth, innerHeight, ...(" + C.ORIGIN + ")]")
+    with aim(s, sx + w / 2, sy + h / 2):
+        C.wheel(b, tid, w / 2, h / 2, n)
     return "ok"
 
 
@@ -554,6 +705,13 @@ def run(s, a):
             raise SystemExit(USAGE)
     if cmd == "version":
         return f"hands {VERSION}"
+    mark(s)   # the agent is using the screen (viewers list it)
+    if cmd in ("click", "double", "move", "scroll") and 2 <= len(rest) <= 3:
+        return pointer(s, cmd, rest)
+    if cmd == "scroll" and len(rest) == 1 and rest[0].lstrip("-").isdigit():
+        return page_scroll(s, int(rest[0]))
+    if cmd in ("type", "key") and rest:
+        return keyboard(s, cmd, rest)
     if cmd == "windows" and not rest:
         return "\n".join(show(w, i + 1) for i, w in enumerate(windows(s))) or "(no windows)"
     if cmd == "state" and len(rest) == 1:
@@ -613,11 +771,12 @@ def run(s, a):
             w = next((w for w in windows() if C.app_port(w["pid"]) == b.port), None)
             if not w:
                 raise SystemExit("no window of this browser on the screen")
-            run_("wmctrl", "-ia", hex(w["id"]))
-            time.sleep(0.2)
-            if len(rest) > 1:
-                run_("xdotool", "type", "--delay", "12", "--", " ".join(rest[1:]))
-            run_("xdotool", "key", "Return" if rest[0] == "ok" else "Escape")
+            with turn(s):
+                run_("wmctrl", "-ia", hex(w["id"]))
+                time.sleep(0.2)
+                if len(rest) > 1:
+                    run_("xdotool", "type", "--delay", "12", "--", " ".join(rest[1:]))
+                run_("xdotool", "key", "Return" if rest[0] == "ok" else "Escape")
             b.dialogs.pop(tid, None)
             return "ok"
         return C.answer_dialog(b, tid, rest[0] == "ok", " ".join(rest[1:]) if len(rest) > 1 else None)

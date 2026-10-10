@@ -70,6 +70,66 @@ chrome = {"x": 52, "y": 36, "w": 1177, "h": 648}
 assert d.title_button(chrome, "close", 0) == (1208, 56) and d.title_button(chrome, "max", 0) == (1176, 56)
 print("title buttons: ok")
 
+# Keys for pages: xdotool names as CDP key events.
+import hands_cdp as c
+assert c.key_event("Return") == {"key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "modifiers": 0, "text": "\r", "unmodifiedText": "\r"}
+e = c.key_event("ctrl+a")
+assert (e["key"], e["code"], e["windowsVirtualKeyCode"], e["modifiers"], e["text"]) == ("a", "KeyA", 65, 2, ""), e
+assert c.key_event("shift+Tab")["modifiers"] == 8 and c.key_event("F5")["windowsVirtualKeyCode"] == 116
+for bad in ("hyper+a", "Nope", "ctrl+"):
+    try:
+        c.key_event(bad)
+        raise AssertionError(bad)
+    except SystemExit:
+        pass
+print("keys: ok")
+
+# Turns on the real pointer and keyboard: in order of arrival; bounded; none while the person watching has control.
+# Virtual cursors: one per agent in ~/.desk/cursors.json.
+import threading
+with tempfile.TemporaryDirectory() as tmp:
+    d.HOME, d.CURSORS, d.TURN_WAIT, d.WAIT = tmp, os.path.join(tmp, "cursors.json"), 1, 0.01
+    t, order = d.Turn(), []
+    def act(name, hold):
+        with t(d.Session(name)):
+            order.append(name)
+            time.sleep(hold)
+    ths = [threading.Thread(target=act, args=(n, 0.1)) for n in ("a", "b", "c")]
+    for th in ths:
+        th.start()
+        time.sleep(0.02)
+    for th in ths:
+        th.join()
+    assert order == ["a", "b", "c"], order
+    th = threading.Thread(target=act, args=("long", 1.5))
+    th.start()
+    time.sleep(0.05)
+    t0 = time.time()
+    try:
+        act("late", 0)
+        raise AssertionError("no timeout")
+    except SystemExit as e:
+        assert "busy for 1 s" in str(e) and 0.9 < time.time() - t0 < 1.5, e
+    th.join()
+    open(os.path.join(tmp, "control"), "w").close()
+    try:
+        act("x", 0)
+        raise AssertionError("ran during take over")
+    except SystemExit as e:
+        assert "taken over" in str(e), e
+    os.remove(os.path.join(tmp, "control"))
+    s1, s2 = d.Session("alfred"), d.Session("nina")
+    with d.aim(s1, 10.4, 20):
+        d.mark(s2, 300, 400, True)
+        import json
+        cur = json.load(open(d.CURSORS))
+        assert cur["alfred"]["acting"] and (cur["alfred"]["x"], cur["alfred"]["y"]) == (10, 20) and cur["nina"]["x"] == 300, cur
+    assert not json.load(open(d.CURSORS))["alfred"]["acting"]
+    d.mark(d.Session("desk", named=False), 1, 1)   # an unnamed agent has no cursor
+    assert set(json.load(open(d.CURSORS))) == {"alfred", "nina"}
+    d.HOME = d.CURSORS = None
+print("turns and cursors: ok")
+
 # The daemon: the first command starts it, the next ones go to it; it answers errors with their message and code; a
 # second daemon leaves the first alone. A private runtime dir keeps this test off a real desktop's daemon.
 with tempfile.TemporaryDirectory() as tmp:

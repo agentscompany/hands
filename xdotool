@@ -1,7 +1,12 @@
 #!/bin/sh
 # xdotool shim (ahead of /usr/bin in PATH): when an agent (DESK_AGENT) drives the screen with xdotool directly, mark it
-# in ~/.desk/last as `desk` does, so viewers know who is using the screen; `desk` already marked it (DESK_MARKED).
+# in ~/.desk/last as `hands` does, and run it in the agent's turn on the real pointer and keyboard (handsd hold), so it
+# does not move the pointer or type under another agent's action. Inside hands (DESK_MARKED) it runs as is.
 if [ -n "$DESK_AGENT" ] && [ -z "$DESK_MARKED" ]; then
   mkdir -p "$HOME/.desk" && echo "$DESK_AGENT $(date +%s)" > "$HOME/.desk/last"
+  case "${1:-}" in
+    get*|search|version|help|"") ;;   # reads nothing on screen changes: no turn needed
+    *) exec python3 -S "${HANDS_LIB:-/usr/local/lib/hands}/handsd.py" hold /usr/bin/xdotool "$@" ;;
+  esac
 fi
 exec /usr/bin/xdotool "$@"

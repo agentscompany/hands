@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """handsd: Hands' daemon, and the thin client `hands` runs.
 
+  handsd hold CMD [args]    (what the xdotool shim runs for an agent) runs CMD in the agent's turn on the real
+                            pointer and keyboard (see Turn in hands_a11y.py)
   handsd <command> [args]   (what `hands` runs) sends the command to the daemon over a Unix socket and prints the
                             answer; starts the daemon if it is not running; runs the command directly
                             (hands_a11y.py) if the daemon cannot start.
@@ -32,10 +34,32 @@ def connect():
     return s
 
 
+def request(argv):
+    return json.dumps({"argv": argv, "agent": os.environ.get("DESK_AGENT") or "",
+                       "screens": os.environ.get("DESK_SCREENS") or "", "cwd": os.getcwd()}).encode() + b"\n"
+
+
+def hold(argv):
+    """Runs argv (xdotool) once the daemon gives this agent its turn; the turn ends when this connection closes. With
+    no daemon, runs it at once."""
+    import subprocess
+    try:
+        s = connect()
+    except OSError:
+        s = start()
+    if s is None:
+        os.execv(argv[0], argv)
+    s.sendall(request(["hold"]))
+    r = json.loads(s.makefile("rb").readline() or b'{"err": "hands: the daemon stopped", "code": 1}')
+    if r.get("code"):
+        sys.exit(r.get("err") or 1)
+    code = subprocess.call(argv)
+    s.close()
+    sys.exit(code)
+
+
 def client(argv):
-    agent = os.environ.get("DESK_AGENT") or ""
-    req = json.dumps({"argv": argv, "agent": agent, "screens": os.environ.get("DESK_SCREENS") or "",
-                      "cwd": os.getcwd()}).encode() + b"\n"
+    req = request(argv)
     for _ in range(3):
         try:
             s = connect()
@@ -118,6 +142,8 @@ def serve():
                 if req["agent"] not in sessions:
                     sessions[req["agent"]] = (H.Session(req["agent"] or "desk", named=bool(req["agent"])), threading.Lock())
                 s, mine = sessions[req["agent"]]
+            if req["argv"][:1] == ["hold"]:
+                return self.hold(s)
             out, err, code = "", "", 0
             with mine:   # one command at a time per agent; agents in parallel
                 s.screens = req["screens"] or os.path.join(H.HOME, "screens")
@@ -134,6 +160,27 @@ def serve():
             self.wfile.write(json.dumps({"out": out, "err": err, "code": code}).encode())
             self.wfile.flush()
 
+        def hold(self, s):
+            """The agent's turn, while its xdotool runs (up to 30 s); then its cursor goes where the pointer went."""
+            where = lambda: H.run_("xdotool", "getmouselocation").split()[:2]
+            try:
+                with H.turn(s):
+                    before = where()
+                    H.mark(s, acting=True)
+                    self.wfile.write(b'{"code": 0}\n')
+                    self.wfile.flush()
+                    self.connection.settimeout(30)
+                    try:
+                        self.rfile.read()   # until the client closes
+                    except OSError:
+                        pass
+                    after = where()
+                    if after != before and len(after) == 2:
+                        H.mark(s, *(int(v.split(":")[1]) for v in after))
+                    H.mark(s, acting=False)
+            except SystemExit as e:
+                self.wfile.write(json.dumps({"err": f"hands: {e.code}", "code": 1}).encode() + b"\n")
+
     class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         daemon_threads = True
 
@@ -145,5 +192,7 @@ def serve():
 if __name__ == "__main__":
     if sys.argv[1:] == ["serve"]:
         serve()
+    elif sys.argv[1:2] == ["hold"] and len(sys.argv) > 2:
+        hold(sys.argv[2:])
     else:
         client(sys.argv[1:])

@@ -1,15 +1,12 @@
 #!/bin/sh
 # hands: computer use for agents on a Linux desktop (display :1). Windows and their elements as text (AT-SPI for GTK
 # apps, the DevTools protocol for Chromium pages and Electron apps), actions by element number, window actions, and
-# pixels. The element and page commands go to handsd (a daemon with open connections; see handsd.py); pixels and
-# opening apps run here.
+# pixels. Everything but screenshots, the desktop's tint and opening apps goes to handsd (a daemon with open
+# connections, which gives agents their turns on the real pointer and keyboard; see handsd.py).
 # The agent is DESK_AGENT, or --as <profile> right after the command: its own Chromium profile, its own numbering of
 # elements, and ~/.desk/last ("<agent> <unix time>"), which tells whoever watches the screen who is using it.
 export DISPLAY=:1
 LIB="${HANDS_LIB:-/usr/local/lib/hands}"; [ -f "$LIB/handsd.py" ] || LIB=$(dirname "$(readlink -f "$0")")
-# A viewer's screen page glides the agent's cursor to where the pointer went: actions wait for it to arrive, so the
-# click is seen where and when it happens (handsd waits the same).
-WAIT=0.4
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 color=""
 if [ "${1:-}" = "--as" ]; then   # open --as <profile> <#rrggbb>: the profile's theme color too
@@ -81,12 +78,6 @@ case "$cmd" in
     scrot -o -p "$f" || exit
     echo "$f"
     ls -t "$d"/*.png 2>/dev/null | tail -n +21 | xargs -r rm -f ;;
-  click)  xdotool mousemove "$1" "$2" && sleep $WAIT && xdotool click "${3:-1}" ;;
-  double) xdotool mousemove "$1" "$2" && sleep $WAIT && xdotool click --repeat 2 1 ;;
-  move)   xdotool mousemove "$1" "$2" ;;
-  type)   xdotool type --delay 12 -- "$*" ;;
-  key)    xdotool key -- "$@" ;;
-  scroll) n="${3:-3}"; b=5; if [ "$n" -lt 0 ]; then b=4; n=$((-n)); fi; xdotool mousemove "$1" "$2" && sleep $WAIT && xdotool click --repeat "$n" "$b" ;;
   tint)   hsetroot -solid "$1" ;;
   open)   case "${1:-}" in
             app)      shift; app "$@" ;;
@@ -95,6 +86,6 @@ case "$cmd" in
             ""|browser|chromium) if [ -n "$a" ]; then profile ""; else setsid chromium >/dev/null 2>&1 & fi ;;
             *)        if [ -n "$a" ]; then profile "$1"; else setsid chromium "$1" >/dev/null 2>&1 & fi ;;
           esac ;;
-  ui|press|set|text|upload|windows|state|close|focus|max|min|read|tabs|tab|wait|fill|eval|dialog|downloads|network|pdf|version) exec python3 -S "$LIB/handsd.py" "$cmd" "$@" ;;
+  click|double|move|type|key|scroll|ui|press|set|text|upload|windows|state|close|focus|max|min|read|tabs|tab|wait|fill|eval|dialog|downloads|network|pdf|version) exec python3 -S "$LIB/handsd.py" "$cmd" "$@" ;;
   *) python3 -S "$LIB/handsd.py" help; exit 2 ;;
 esac

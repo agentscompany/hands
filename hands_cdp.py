@@ -6,7 +6,7 @@ A browser is found by its DevTools port: an agent's Chromium (~/.config/chromium
 --remote-debugging-port=0) writes it to <profile>/DevToolsActivePort; an Electron app opened by `hands open app` runs
 with --remote-debugging-port=N.
 """
-import base64, json, os, socket, struct, threading, time, urllib.request
+import base64, json, os, re, socket, struct, threading, time, urllib.request
 
 LIMIT = 120  # elements per read: the rest comes after scrolling
 
@@ -62,7 +62,7 @@ SNAPSHOT = r"""
     out.push({key: e.dataset.hk, sig: k.split(' ')[0] + ' ' + name, line});
   }
   if (more) out.push({line: '(+' + more + ' more visible elements past the limit)'});
-  if (document.documentElement.scrollHeight - scrollY - H > 40) out.push({line: '(the page goes on below: scroll to see more, then ui again)'});
+  if (document.documentElement.scrollHeight - scrollY - H > 40) out.push({line: '(the page goes on below: hands scroll 5 to see more, then ui again)'});
   return {head: document.title + ' — ' + location.href, doc, items: out};
 })()
 """.replace("__LIMIT__", str(LIMIT))
@@ -461,9 +461,12 @@ def find(b, tid, doc, key):
     return r
 
 
+# Where the page's top left corner is on the screen: the window's, past its side border and the toolbars.
+ORIGIN = "[screenX + (outerWidth - innerWidth) / 2, screenY + outerHeight - innerHeight - (outerWidth - innerWidth) / 2]"
+
+
 def screen_origin(b, tid):
-    """Where the page's top left corner is on the screen: the window's, past its side border and the toolbars."""
-    return b.js(tid, "[screenX + (outerWidth - innerWidth) / 2, screenY + outerHeight - innerHeight - (outerWidth - innerWidth) / 2]")
+    return b.js(tid, ORIGIN)
 
 
 def click(b, tid, x, y):
@@ -472,6 +475,61 @@ def click(b, tid, x, y):
         b.c.call("Input.dispatchMouseEvent", session=s, wait=t != "mouseReleased", type=t, x=x, y=y,   # do not wait
                  button="left" if t != "mouseMoved" else "none", buttons=held, clickCount=1)
     time.sleep(0.05)
+
+
+def wheel(b, tid, x, y, n):
+    b.call(tid, "Input.dispatchMouseEvent", type="mouseWheel", x=x, y=y, deltaX=0, deltaY=n * 100)
+    time.sleep(0.15)   # smooth scrolling
+
+
+# xdotool key names -> (DOM key, Windows key code, text). Letters, digits and other single characters map to
+# themselves; F1-F12 too.
+KEYS = {"return": ("Enter", 13, "\r"), "enter": ("Enter", 13, "\r"), "kp_enter": ("Enter", 13, "\r"),
+        "tab": ("Tab", 9, ""), "escape": ("Escape", 27, ""), "backspace": ("Backspace", 8, ""),
+        "delete": ("Delete", 46, ""), "space": (" ", 32, " "), "insert": ("Insert", 45, ""),
+        "up": ("ArrowUp", 38, ""), "down": ("ArrowDown", 40, ""), "left": ("ArrowLeft", 37, ""),
+        "right": ("ArrowRight", 39, ""), "home": ("Home", 36, ""), "end": ("End", 35, ""),
+        "page_up": ("PageUp", 33, ""), "prior": ("PageUp", 33, ""), "page_down": ("PageDown", 34, ""),
+        "next": ("PageDown", 34, "")}
+MODS = {"alt": 1, "ctrl": 2, "control": 2, "super": 4, "meta": 4, "shift": 8}
+
+
+def key_event(combo):
+    """An xdotool key combo (ctrl+a, shift+Tab, Return, F5) as CDP Input.dispatchKeyEvent parameters."""
+    *mods, k = combo.split("+")
+    if not k or any(m.lower() not in MODS for m in mods):
+        raise SystemExit(f"unknown key {combo!r}: use xdotool names (Return, Tab, ctrl+a, shift+Tab, F5)")
+    m = sum(MODS[x.lower()] for x in mods)
+    if k.lower() in KEYS:
+        name, vk, text = KEYS[k.lower()]
+    elif re.fullmatch(r"[Ff]([1-9]|1[0-2])", k):
+        name, vk, text = k.upper(), 111 + int(k[1:]), ""
+    elif len(k) == 1:
+        name = text = k.upper() if m & 8 else k
+        vk = ord(k.upper()) if k.isascii() and k.isalnum() else 0
+    else:
+        raise SystemExit(f"unknown key {combo!r}: use xdotool names (Return, Tab, ctrl+a, shift+Tab, F5)")
+    if m & 7:   # ctrl, alt, super: a shortcut, no text
+        text = ""
+    code = ("Key" + k.upper() if k.isascii() and k.isalpha() else "Digit" + k) if len(k) == 1 and k.isascii() and k.isalnum() else name
+    return {"key": name, "code": code, "windowsVirtualKeyCode": vk, "modifiers": m, "text": text, "unmodifiedText": text}
+
+
+def key(b, tid, combo):
+    """Presses a key in the page (not the browser's own shortcuts, as ctrl+l or ctrl+t: those are not the page's)."""
+    e, s = key_event(combo), b.session(tid)
+    for t in ("keyDown" if e["text"] else "rawKeyDown", "keyUp"):   # Return may open a dialog: do not wait
+        b.c.call("Input.dispatchKeyEvent", session=s, wait=False, type=t, **e)
+    time.sleep(0.05)
+
+
+def type_text(b, tid, text):
+    """Types into the page's focused element; a new line is Return."""
+    for i, line in enumerate(text.split("\n")):
+        if i:
+            key(b, tid, "Return")
+        if line:
+            b.call(tid, "Input.insertText", text=line)
 
 
 def set_value(b, tid, doc, key, tag, text):

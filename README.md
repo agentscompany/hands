@@ -22,7 +22,7 @@ repository out with a read-only deploy key).
 
 On Debian 13 with a desktop on `:1`, as root (e.g. in a Dockerfile), from a checkout of a release tag:
 
-    git clone --depth 1 --branch v0.3.0 git@github.com:agentscompany/hands.git && sh hands/install.sh
+    git clone --depth 1 --branch v0.4.0 git@github.com:agentscompany/hands.git && sh hands/install.sh
 
 Chromium must run with `--remote-debugging-port=0` for its pages to read as text.
 
@@ -38,7 +38,7 @@ Chromium must run with `--remote-debugging-port=0` for its pages to read as text
    you already have stay good.
 
 Pixels are for canvas apps, or for checking: `hands state W --shot` adds a screenshot of the window (a window with no
-elements gets one anyway), and `hands screenshot`, `hands click X Y`.
+elements gets one anyway), and `hands screenshot`, `hands click X Y` (these wait their turn on the real pointer).
 
     $ hands windows
     [1] xfce4-terminal "Terminal - ac@desk: ~" 772x477
@@ -62,8 +62,29 @@ elements gets one anyway), and `hands screenshot`, `hands click X Y`.
     - # 7 folders | 3 files: 4.4 KiB (4553 bytes) | Free space: 1.6 TiB
 
 Actions use the element's accessible action when the app has one (the window need not be in front); otherwise they
-focus the window and click the element's center. Either way the pointer moves to the element, so whoever watches the
-screen sees where the agent acted.
+bring the window up and click the element's center with the real pointer, in the agent's turn (see below).
+
+## Several agents at once
+
+X has one pointer and one keyboard, so Hands only uses them when nothing else works, one agent at a time:
+
+- Page actions (`press`, `set`, `fill`, `type`, `key`, `scroll N` on an agent's page or an Electron app) go through
+  the page's own input (CDP), and accessible actions through AT-SPI: no real pointer, no keyboard focus, no raised
+  window. Agents do these in parallel, each in its own browser.
+- What needs the real pointer or keyboard takes a turn: `click`, `double`, `move`, `scroll X Y N`, `type` and `key`
+  into a window that is not a page, a GTK element with no accessible action, `close|focus|max|min`, and `state --shot`
+  (the window must be on top). Turns go in order of arrival and last one action; one waits at most 20 s, then fails
+  with a clear message. The `xdotool` shim takes a turn too when `DESK_AGENT` is set.
+- While the person watching has taken over (their screen page keeps `~/.desk/control` fresh), no turn is given;
+  page commands still work.
+- `type` and `key` go to the agent's page after `ui`, `press` or `set` on it, and to the screen after `click`, `focus`
+  or `state` of another window. Keys for a page are the page's: browser shortcuts such as `ctrl+l` are not (use
+  `hands open` and `hands tab`).
+
+Each agent has a virtual cursor: where it acts, in screen pixels, and whether it is acting now, in
+`~/.desk/cursors.json` (`{"alfred": {"x": 556, "y": 162, "acting": true, "t": 1791657099.15}}`, `t` its last
+command). An action waits 0.4 s after its cursor moves, so a viewer that draws the cursors sees each one arrive before
+it acts.
 
 ## The browser
 
@@ -106,7 +127,8 @@ the PATH under the name you will open it by.
     hands ui [--changes] | read [P] | upload N file | fill JSON | wait load|idle|text T [S] | tabs | tab …
     hands dialog ok|cancel [text] | eval JS | downloads | network | pdf FILE
     hands open url|terminal|files|browser|app NAME   url: in the agent's own Chromium profile
-    hands screenshot [file] | click X Y | double X Y | move X Y | type text | key ctrl+l | scroll X Y N | tint #rrggbb
+    hands type text | key ctrl+a Return | scroll N    into the agent's page (see Several agents at once), or the screen
+    hands screenshot [file] | click X Y | double X Y | move X Y | scroll X Y N | tint #rrggbb
     hands version                                    "(daemon)" when the daemon answered
 
 The agent is `DESK_AGENT`, or `--as <profile>` right after the command (`hands state --as alfred files`;
@@ -120,6 +142,7 @@ can open); its log is `~/.desk/handsd.log`. It restarts by itself after Hands is
 
 ## Test
 
-    python3 test_hands.py      # windows, the tree's numbering, stable numbers, change lists, the daemon; no desktop needed
+    python3 test_hands.py      # windows, the tree's numbering, stable numbers, change lists, keys, turns, cursors and
+                               # the daemon; no desktop needed
 
 MIT License.
