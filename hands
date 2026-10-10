@@ -1,22 +1,25 @@
 #!/bin/sh
-# hands: computer use for agents on a Linux desktop (display :1). Windows and their elements as text (hands-a11y:
-# AT-SPI, and pc-ui for Chromium pages), actions by element number, window actions, and pixels.
+# hands: computer use for agents on a Linux desktop (display :1). Windows and their elements as text (AT-SPI for GTK
+# apps, the DevTools protocol for Chromium pages and Electron apps), actions by element number, window actions, and
+# pixels. The element and page commands go to handsd (a daemon with open connections; see handsd.py); pixels and
+# opening apps run here.
 # The agent is DESK_AGENT, or --as <profile> right after the command: its own Chromium profile, its own numbering of
 # elements, and ~/.desk/last ("<agent> <unix time>"), which tells whoever watches the screen who is using it.
 export DISPLAY=:1
+LIB="${HANDS_LIB:-/usr/local/lib/hands}"; [ -f "$LIB/handsd.py" ] || LIB=$(dirname "$(readlink -f "$0")")
 # A viewer's screen page glides the agent's cursor to where the pointer went: actions wait for it to arrive, so the
-# click is seen where and when it happens (hands-a11y and pc-ui wait the same).
+# click is seen where and when it happens (handsd waits the same).
 WAIT=0.4
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 color=""
 if [ "${1:-}" = "--as" ]; then   # open --as <profile> <#rrggbb>: the profile's theme color too
   DESK_AGENT="$2"; shift 2
-  if [ "$cmd" = open ]; then color="$1"; shift; fi
+  case "$cmd:${1:-}" in open:\#*) color="$1"; shift ;; esac
 fi
 a="${DESK_AGENT:-}"
 export DESK_AGENT
 
-case "$cmd" in screenshot|click|double|move|type|key|scroll|open|ui|press|set|text|upload|windows|state|close|focus|max|min)
+case "$cmd" in screenshot|click|double|move|type|key|scroll|open|ui|press|set|text|upload|windows|state|close|focus|max|min|read|tabs|tab|wait|fill|eval|dialog|downloads|network|pdf|version)
   if [ -n "$a" ]; then
     mkdir -p "$HOME/.desk" && echo "$a $(date +%s)" > "$HOME/.desk/last"
     export DESK_MARKED=1   # the xdotool shim need not mark it again
@@ -55,6 +58,21 @@ PY
   setsid chromium --user-data-dir="$d" ${1:+"$1"} >/dev/null 2>&1 &
 }
 
+# An Electron app (VS Code, Slack, Discord, Obsidian…) with its DevTools port open on 127.0.0.1, so state, press, read
+# and the other page commands work on it as on a page: the port is on its command line, where hands finds it.
+app() {
+  name="${1:?usage: hands open app NAME}"; shift
+  case "$name" in vscode|vs-code) name=code ;; esac
+  command -v "$name" >/dev/null || { echo "$name is not installed: install it first (see Hands' README, Electron apps)" >&2; exit 1; }
+  port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+  setsid "$name" --no-sandbox --remote-debugging-port="$port" "$@" >/dev/null 2>&1 &
+  for i in $(seq 40); do
+    python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$port/json/version', timeout=1)" 2>/dev/null && { echo ok; return; }
+    sleep 0.5
+  done
+  echo "$name did not open its DevTools port: if it was already open, close it (hands close $name) and open it again" >&2; exit 1
+}
+
 case "$cmd" in
   screenshot)
     if [ -n "${1:-}" ]; then scrot -o -p "$1" && echo "$1"; exit; fi
@@ -71,22 +89,12 @@ case "$cmd" in
   scroll) n="${3:-3}"; b=5; if [ "$n" -lt 0 ]; then b=4; n=$((-n)); fi; xdotool mousemove "$1" "$2" && sleep $WAIT && xdotool click --repeat "$n" "$b" ;;
   tint)   hsetroot -solid "$1" ;;
   open)   case "${1:-}" in
+            app)      shift; app "$@" ;;
             terminal) shift; setsid xfce4-terminal --hide-menubar --hide-toolbar --hide-scrollbar "$@" >/dev/null 2>&1 & ;;
             files)    setsid thunar >/dev/null 2>&1 & ;;
             ""|browser|chromium) if [ -n "$a" ]; then profile ""; else setsid chromium >/dev/null 2>&1 & fi ;;
             *)        if [ -n "$a" ]; then profile "$1"; else setsid chromium "$1" >/dev/null 2>&1 & fi ;;
           esac ;;
-  ui|press|set|text|upload|windows|state|close|focus|max|min) exec hands-a11y "$cmd" "$@" ;;
-  *) cat >&2 <<'USAGE'
-usage: hands windows                     the windows, numbered
-       hands state W                     window W's elements, numbered, and a screenshot of it (W: number or app name)
-       hands press N | set N TEXT | text   act on element N of the last state (or ui); text: the window's text
-       hands close|focus|max|min W
-       hands ui                          your browser's page as text, elements numbered; hands upload N FILE
-       hands open URL|terminal|files     a page in your own browser, a terminal or the file manager
-       hands screenshot [file]           the whole screen as PNG (default: ~/.desk/screens), prints its path
-       hands click X Y [button] | double X Y | move X Y | type TEXT | key ctrl+l | scroll X Y N (N < 0: up) | tint #rrggbb
-       --as <profile> after the command names the agent (else DESK_AGENT); open --as <profile> <#rrggbb> [url]
-USAGE
-     exit 2 ;;
+  ui|press|set|text|upload|windows|state|close|focus|max|min|read|tabs|tab|wait|fill|eval|dialog|downloads|network|pdf|version) exec python3 -S "$LIB/handsd.py" "$cmd" "$@" ;;
+  *) python3 -S "$LIB/handsd.py" help; exit 2 ;;
 esac
