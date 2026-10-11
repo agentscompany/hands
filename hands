@@ -49,6 +49,20 @@ PY
   # The theme loads in a process with no window yet, so the "Installed theme" bubble has nowhere to show
   # (with --load-extension Chromium installs the theme again in every new process).
   if ! pgrep -f -- "--user-data-dir=$d( |$)" >/dev/null; then
+    # The profile's name (Chromium's profile menu, window list): the agent's (DESK_AGENT_NAME, else the profile).
+    # Written only while that Chromium is closed: it rewrites both files when it exits.
+    python3 - "$d" "${DESK_AGENT_NAME:-$a}" <<'PY'
+import json, sys
+d, name = sys.argv[1], sys.argv[2]
+def edit(path, change):
+    try: data = json.load(open(path))
+    except (OSError, ValueError): data = {}
+    change(data)
+    json.dump(data, open(path, "w"))
+edit(d + "/Local State", lambda s: s.setdefault("profile", {}).setdefault("info_cache", {}).setdefault("Default", {})
+     .update(name=name, is_using_default_name=False))
+edit(d + "/Default/Preferences", lambda p: p.setdefault("profile", {}).update(name=name))
+PY
     setsid chromium --no-startup-window --user-data-dir="$d" --load-extension="$d/theme" >/dev/null 2>&1 &
     for i in 1 2 3 4 5 6 7 8 9 10; do [ -e "$d/SingletonSocket" ] && break; sleep 0.3; done; sleep 1
   fi

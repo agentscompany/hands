@@ -10,7 +10,7 @@ import collections, contextlib, glob, json, os, re, subprocess, sys, threading, 
 
 import hands_cdp as C
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 HOME = os.path.expanduser("~/.desk")
 LIMIT = 150  # elements per state, like hands_cdp
 os.environ["DISPLAY"] = ":1"

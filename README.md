@@ -22,7 +22,7 @@ repository out with a read-only deploy key).
 
 On Debian 13 with a desktop on `:1`, as root (e.g. in a Dockerfile), from a checkout of a release tag:
 
-    git clone --depth 1 --branch v0.4.0 git@github.com:agentscompany/hands.git && sh hands/install.sh
+    git clone --depth 1 --branch v0.4.1 git@github.com:agentscompany/hands.git && sh hands/install.sh
 
 Chromium must run with `--remote-debugging-port=0` for its pages to read as text.
 
@@ -132,8 +132,8 @@ the PATH under the name you will open it by.
     hands version                                    "(daemon)" when the daemon answered
 
 The agent is `DESK_AGENT`, or `--as <profile>` right after the command (`hands state --as alfred files`;
-`hands open --as alfred #fb9b50 [url]` also gives its Chromium a color theme). It has its own Chromium profile and its
-own numbering of elements. Screenshots go to `~/.desk/screens` (the last 20; `DESK_SCREENS` changes it). Every action
+`hands open --as alfred #fb9b50 [url]` also gives its Chromium a color theme). It has its own Chromium profile (named
+`DESK_AGENT_NAME`, else the profile) and its own numbering of elements. Screenshots go to `~/.desk/screens` (the last 20; `DESK_SCREENS` changes it). Every action
 of a named agent writes `~/.desk/last` (`<agent> <unix time>`), so a viewer knows who is using the screen; an `xdotool`
 shim in `/usr/local/bin` writes it too when an agent runs xdotool directly, then runs the real one.
 
