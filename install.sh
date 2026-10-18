@@ -15,7 +15,7 @@ install -m 755 "$HERE/hands" /usr/local/bin/hands
 install -m 755 "$HERE/pc" /usr/local/bin/pc
 install -m 755 "$HERE/desk" /usr/local/bin/desk
 install -d /usr/local/lib/hands
-install -m 644 "$HERE/handsd.py" "$HERE/hands_a11y.py" "$HERE/hands_cdp.py" /usr/local/lib/hands/
+install -m 644 "$HERE/handsd.py" "$HERE/hands_a11y.py" "$HERE/hands_cdp.py" "$HERE/hands_mpx.py" /usr/local/lib/hands/
 python3 -m compileall -q /usr/local/lib/hands
 rm -f /usr/local/bin/hands-a11y /usr/local/bin/pc-ui   # before 0.3 these were commands
 install -m 755 "$HERE/xdotool" /usr/local/bin/xdotool   # ahead of /usr/bin in PATH

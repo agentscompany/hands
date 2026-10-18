@@ -9,6 +9,7 @@ DESK_AGENT names the agent (its browser profile and its own numbering); DESK_SCR
 import collections, contextlib, glob, json, os, re, subprocess, sys, threading, time
 
 import hands_cdp as C
+import hands_mpx as M
 
 VERSION = "0.4.1"
 HOME = os.path.expanduser("~/.desk")
@@ -79,6 +80,7 @@ class Session:
         self.agent, self.named = agent, named
         self.last, self.windows, self.scopes = None, None, {}
         self.keys_to_screen = True   # type and key go to the screen, or (False) to the page the agent last used
+        self.focus = None   # the window its own keyboard types into (hands_mpx), once it clicked or focused one
         self.screens = os.path.join(HOME, "screens")
         self.cwd = os.getcwd()
 
@@ -221,11 +223,13 @@ def mark(s, x=None, y=None, acting=None):
 
 
 @contextlib.contextmanager
-def aim(s, x, y, real=False):
+def aim(s, x, y, real=False, hand=None):
     """The agent's cursor goes to (x, y) and the action waits for viewers to see it arrive. real: the X pointer goes
-    there too (only with the turn: see Turn)."""
+    there too (only with the turn: see Turn); hand: the agent's own pointer (hands_mpx) instead, with no turn."""
     mark(s, x, y, True)
-    if real:
+    if hand:
+        hand.move(x, y)
+    elif real:
         run_("xdotool", "mousemove", str(round(x)), str(round(y)))
     if s.named:
         time.sleep(WAIT)
@@ -276,6 +280,49 @@ class Turn:
 
 
 turn = Turn()
+
+
+def own_hand(s, window):
+    """The agent's own pointer and keyboard for this window (hands_mpx: agents click and type at the same time), or
+    None: then the real ones, in its turn (also while the person watching has control, which the turn waits out).
+    Not on Chromium or Electron windows: when two agents' own pointers click them at once, one agent's keys are
+    ignored by every Chromium from then on (tested on Chromium 141); their pages need no pointer anyway (ui, press)."""
+    if not s.named or user_control() or window is None or chromium_based(window_pid(window)):
+        return None
+    return M.hand(s.agent)
+
+
+def chromium_based(pid):
+    """Chromium, or an Electron app: resources.pak next to the program."""
+    try:
+        return os.path.exists(os.path.join(os.path.dirname(os.readlink(f"/proc/{pid}/exe")), "resources.pak"))
+    except OSError:
+        return pid is None
+
+
+def window_pid(wid):
+    return next((w["pid"] for w in windows() if w["id"] == wid), None)
+
+
+def window_at(x, y):
+    """The window on top at (x, y), by the window manager's stacking order (None on the desktop)."""
+    order = run_("xprop", "-root", "_NET_CLIENT_LIST_STACKING").partition("#")[2]
+    ws = {w["id"]: w for w in windows()}
+    for wid in reversed([int(v, 16) for v in order.replace(",", " ").split()]):
+        w = ws.get(wid)
+        if w and w["x"] <= x < w["x"] + w["w"] and w["y"] <= y < w["y"] + w["h"]:
+            return wid
+    return None
+
+
+def hand_click(s, h, window, x, y):
+    """A click with the agent's own pointer on a window (brought up first, as click() does), whose keys it then has."""
+    run_("wmctrl", "-ia", hex(window))
+    time.sleep(0.2)
+    with aim(s, x, y, hand=h):
+        h.click()
+    s.focus = window
+    h.focus(window)
 
 
 def title_button(w, what, top):
@@ -522,9 +569,14 @@ def press(s, n):
         f = facts(o)
         # A row's accessible actions edit or expand it: a click selects it, as for a person (then Return opens it).
         act = o.queryAction() if f["actions"] and f["role"] not in ("table cell", "tree item", "list item") else None
-    if not act:   # a real click: the real pointer, in the agent's turn
+    if not act:   # a real click: the agent's own pointer, or the real one in its turn
+        h = own_hand(s, st["window"])
+        if h:
+            hand_click(s, h, st["window"], *c)
+            return "ok"
         with turn(s), aim(s, *c, real=True):
             click(st)
+        s.focus = st["window"]
         return "ok"
     with aim(s, *c):   # the accessible action: no pointer (other agents may use AT-SPI while this one's cursor travels)
         with ATSPI:
@@ -549,10 +601,16 @@ def set_text(s, n, text):
         with aim(s, *c), ATSPI:
             o.queryEditableText().setTextContents(text)
         return "ok"
-    with turn(s), aim(s, *c, real=True):   # a terminal, or anything else that takes keys: click it and type
+    h = own_hand(s, st["window"])
+    if h:   # a terminal, or anything else that takes keys: click it and type, with the agent's own pointer and keys
+        hand_click(s, h, st["window"], *c)
+        if h.type(text):
+            s.keys_to_screen = True
+            return "ok"
+    with turn(s), aim(s, *c, real=True):   # the real ones, in the agent's turn
         click(st)
         run_("xdotool", "type", "--delay", "12", "--", text)
-    s.keys_to_screen = True
+    s.keys_to_screen, s.focus = True, st["window"]
     return "ok"
 
 
@@ -609,7 +667,7 @@ def window_action(s, what, arg):
             else:
                 run_("xdotool", "windowminimize", str(w["id"]))
     if what == "focus":
-        s.keys_to_screen = True
+        s.keys_to_screen, s.focus = True, w["id"]
     return "ok"
 
 
@@ -639,6 +697,20 @@ def pointer(s, cmd, rest):
         n = int(rest[2]) if cmd == "scroll" and len(rest) > 2 else 3
     except ValueError:
         raise SystemExit(USAGE)
+    target = window_at(x, y)
+    h = own_hand(s, target)
+    if h:   # the agent's own pointer: no turn
+        with aim(s, x, y, hand=h):
+            if cmd == "click":
+                h.click(int(rest[2]) if len(rest) > 2 and rest[2].isdigit() else 1)
+            elif cmd == "double":
+                h.click(1, 2)
+            elif cmd == "scroll":
+                h.click(4 if n < 0 else 5, abs(n))
+        if cmd in ("click", "double"):
+            s.keys_to_screen, s.focus = True, target
+            h.focus(target)
+        return ""
     with turn(s), aim(s, x, y, real=True):
         if cmd == "click":
             run_("xdotool", "click", rest[2] if len(rest) > 2 else "1")
@@ -647,7 +719,7 @@ def pointer(s, cmd, rest):
         elif cmd == "scroll":
             run_("xdotool", "click", "--repeat", str(abs(n)), "4" if n < 0 else "5")
     if cmd in ("click", "double"):
-        s.keys_to_screen = True
+        s.keys_to_screen, s.focus = True, target
     return ""
 
 
@@ -666,6 +738,15 @@ def keyboard(s, cmd, rest):
         finally:
             mark(s, acting=False)
         return ""
+    h = own_hand(s, s.focus)
+    if h:   # into the window it clicked or focused, with its own keyboard: no turn
+        h.focus(s.focus)
+        mark(s, acting=True)
+        try:
+            if h.type(" ".join(rest)) if cmd == "type" else h.keys(rest):
+                return ""
+        finally:
+            mark(s, acting=False)
     with turn(s):
         mark(s, acting=True)
         try:
