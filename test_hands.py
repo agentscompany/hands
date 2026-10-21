@@ -149,3 +149,26 @@ with tempfile.TemporaryDirectory() as tmp:
     assert r.stdout.strip().endswith("(daemon)"), r
     subprocess.run(["pkill", "-f", f"{hd} serve"])   # this test's daemon (its socket goes with tmp)
 print("daemon: ok")
+
+
+# Buttons that need a person's approval, by their line in the last view.
+for x in ['button "Pay now"', 'button "Comprar"', 'link "Finalizar compra"', 'button "Delete account"', 'button "Alterar senha"', 'button "Place order"']:
+    assert d.RISKY.search(x), x
+for x in ['button "PayPal"', 'link "Payment methods"', 'button "Save"', 'button "Compartilhar"', 'button "Delete comment"']:
+    assert not d.RISKY.search(x), x
+d.HOME = tempfile.mkdtemp()
+g = d.Session("guard")
+g.last = {"kind": "atspi", "window": 7, "refs": {}}
+g.ids(("atspi", 7)).lines = ['[1] button "Save"', '[2] button "Pay now"']
+assert d.label(g, 2) == '[2] button "Pay now"' and d.label(g, 9) == ""
+d.guard(g, 1, None); d.guard(g, 2, '[2] button "Pay now"')
+for bad in ('[2] button "Delete account"', "x"):
+    try:
+        d.guard(g, 2, bad); raise AssertionError("approved another")
+    except SystemExit as e:
+        assert "not the approved one" in str(e), e
+try:
+    d.guard(g, 2, None); raise AssertionError("no guard")
+except SystemExit as e:
+    assert str(e) == 'needs approval: [2] button "Pay now"', e
+print("approval: ok")

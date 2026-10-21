@@ -10,7 +10,7 @@ import collections, contextlib, glob, json, os, re, subprocess, sys, threading, 
 
 import hands_cdp as C
 
-VERSION = "0.4.1"
+VERSION = "0.5.0"
 HOME = os.path.expanduser("~/.desk")
 LIMIT = 150  # elements per state, like hands_cdp
 os.environ["DISPLAY"] = ":1"
@@ -18,7 +18,10 @@ os.environ["DISPLAY"] = ":1"
 USAGE = """usage: hands windows                     the windows, numbered
        hands state W [--changes] [--shot]  window W's elements, numbered (W: number or app name); --changes: only
                                          what changed since your last state of W; --shot: a screenshot of W too
-       hands press N | set N TEXT | text   act on element N of the last state (or ui); text: the window's text
+       hands press N | set N TEXT | text   act on element N of the last state (or ui); text: the window's text.
+                                         They answer what changed. A button that pays, buys, transfers money,
+                                         deletes an account or changes a password answers "needs approval" instead
+                                         (the program running hands asks a person, then presses it with --approved=LINE)
        hands close|focus|max|min W
        hands ui [--changes]              your browser's page, elements numbered; hands upload N FILE
        hands read [P]                    the page as text (markdown), part P of a long one
@@ -509,13 +512,63 @@ def state(s, arg, changes=False, shot=False):
     return out
 
 
-def press(s, n):
+# Buttons a person approves first: money, deleting an account, a password (in English and Portuguese).
+RISKY = re.compile(r"\b(pay|pay now|pagar|pague|buy|buy now|comprar|compre|checkout|place order|fazer pedido|"
+                   r"finalizar (a )?compra|confirm (purchase|payment)|confirmar (compra|pagamento)|transfer|transferir|"
+                   r"subscribe|assinar agora|delete (my )?account|excluir (minha )?conta|apagar (minha )?conta|"
+                   r"change password|alterar senha|mudar senha)\b", re.I)
+
+
+def label(s, n):
+    """Element n's line in the agent's last view ('[4] button "Pay now"'), or "" if it is not there."""
+    st = s.last or {}
+    scope = ("cdp", st.get("port"), st.get("tid"), st.get("doc")) if st.get("kind") == "cdp" else ("atspi", st.get("window"))
+    return next((x for x in (s.scopes.get(scope) or Ids()).lines or [] if x.startswith(f"[{n}] ")), "")
+
+
+def guard(s, n, approved):
+    """approved: the line a person approved; the element must still be that one (the numbers may have moved on)."""
+    line = label(s, n)
+    if approved is not None and approved != line:
+        raise SystemExit(f"element {n} is not the approved one anymore ({line or 'gone'}): run state again and press it")
+    if approved is None and RISKY.search(line.split("] ", 1)[-1]):
+        raise SystemExit(f"needs approval: {line}")
+
+
+def effect(s):
+    """After an action: what changed in the agent's window or page since its last view, in short; or a warning when
+    nothing did. Waits up to about a second for it."""
+    st = s.last or {}
+    for wait in (0.4, 0.6):
+        time.sleep(wait)
+        try:
+            if st.get("kind") == "cdp":
+                b = C.browser(st["port"])
+                out = page_view(s, b, st["tid"], "", True, own=st.get("own"), window=st.get("window"))
+            else:
+                ws = windows(s)
+                i = next((i for i, w in enumerate(ws) if w["id"] == st.get("window")), None)
+                if i is None:
+                    return "; the window closed"
+                out = state(s, str(i + 1), changes=True)
+        except BaseException:   # reading it again failed (the page is loading): the action itself went fine
+            return ""
+        lines = [x for x in out.splitlines()[1:] if x and x != "(no changes)"]
+        if lines:
+            kinds = collections.Counter(x[0] for x in lines if x[:2] in ("+ ", "~ ", "- "))
+            shown = "; ".join(x[:80] for x in lines[:3]) + (" …" if len(lines) > 3 else "")
+            return f"; changed: {' '.join(f'{k}{v}' for k, v in kinds.items())} ({shown})"
+    return "; nothing changed in 1 s: it may not have worked, run state (or ui) again before going on"
+
+
+def press(s, n, approved=None):
+    guard(s, n, approved)
     if (s.last or {}).get("kind") == "cdp":   # through the page's own input: no real pointer, no turn
         b, st, _, x, y, _, at = page_element(s, n)
         with aim(s, *at):
             C.click(b, st["tid"], x, y)
         d = b.dialogs.get(st["tid"])
-        return "ok" + (f"; {C.dialog_text(d)}" if d else "")
+        return "ok" + (f"; {C.dialog_text(d)}" if d else effect(s))
     st, o = element(s, n)
     with ATSPI:
         c = center(o)
@@ -525,12 +578,12 @@ def press(s, n):
     if not act:   # a real click: the real pointer, in the agent's turn
         with turn(s), aim(s, *c, real=True):
             click(st)
-        return "ok"
+        return "ok" + effect(s)
     with aim(s, *c):   # the accessible action: no pointer (other agents may use AT-SPI while this one's cursor travels)
         with ATSPI:
             want = next((w for w in ("click", "press", "activate", "toggle", "jump") if w in f["actions"]), None)
             act.doAction(f["actions"].index(want) if want else 0)
-    return "ok"
+    return "ok" + effect(s)
 
 
 def set_text(s, n, text):
@@ -540,7 +593,7 @@ def set_text(s, n, text):
             if tag != "SELECT":
                 C.click(b, st["tid"], x, y)
             C.set_value(b, st["tid"], st["doc"], key, tag, text)
-        return "ok"
+        return "ok" + effect(s)
     st, o = element(s, n)
     with ATSPI:
         c = center(o)
@@ -548,12 +601,12 @@ def set_text(s, n, text):
     if editable:
         with aim(s, *c), ATSPI:
             o.queryEditableText().setTextContents(text)
-        return "ok"
+        return "ok" + effect(s)
     with turn(s), aim(s, *c, real=True):   # a terminal, or anything else that takes keys: click it and type
         click(st)
         run_("xdotool", "type", "--delay", "12", "--", text)
     s.keys_to_screen = True
-    return "ok"
+    return "ok" + effect(s)
 
 
 def text(s):
@@ -719,8 +772,9 @@ def run(s, a):
     if cmd == "ui" and not rest:
         b, tid = C.own_page(s.agent)
         return page_view(s, b, tid, "", "--changes" in flags, own=True)
-    if cmd == "press" and len(rest) == 1:
-        return press(s, rest[0])
+    if cmd == "press" and len([x for x in rest if not x.startswith("--approved=")]) == 1:
+        ok = next((x.split("=", 1)[1] for x in rest if x.startswith("--approved=")), None)
+        return press(s, next(x for x in rest if not x.startswith("--approved=")), ok)
     if cmd == "set" and len(rest) >= 2:
         return set_text(s, rest[0], " ".join(rest[1:]))
     if cmd == "text" and not rest:
