@@ -195,5 +195,6 @@ except SystemExit as e:
 assert not d.RISKY.search('button "5, Friday, February 2027. Available. Select as checkout date. Higher price."')
 assert not d.RISKY.search('button "Change dates; Check-in: Add date; Checkout: Add date"')
 assert not d.RISKY.search('button "17, Saturday, July 2027. Disponível. Selecione como a data de checkout. Preço ma"')
+assert not d.RISKY.search('button "Check-in/Checkout Qualquer dia"')
 assert d.RISKY.search('button "Checkout"') and d.RISKY.search('button "Proceed to checkout"')
 print("approval: ok")
