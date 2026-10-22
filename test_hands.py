@@ -171,4 +171,6 @@ try:
     d.guard(g, 2, None); raise AssertionError("no guard")
 except SystemExit as e:
     assert str(e) == 'needs approval: [2] button "Pay now"', e
+assert not d.RISKY.search('button "5, Friday, February 2027. Available. Select as checkout date. Higher price."')
+assert d.RISKY.search('button "Checkout"')
 print("approval: ok")

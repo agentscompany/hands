@@ -513,7 +513,7 @@ def state(s, arg, changes=False, shot=False):
 
 
 # Buttons a person approves first: money, deleting an account, a password (in English and Portuguese).
-RISKY = re.compile(r"\b(pay|pay now|pagar|pague|buy|buy now|comprar|compre|checkout|place order|fazer pedido|"
+RISKY = re.compile(r"\b(pay|pay now|pagar|pague|buy|buy now|comprar|compre|checkout(?! date)|place order|fazer pedido|"
                    r"finalizar (a )?compra|confirm (purchase|payment)|confirmar (compra|pagamento)|transfer|transferir|"
                    r"subscribe|assinar agora|delete (my )?account|excluir (minha )?conta|apagar (minha )?conta|"
                    r"change password|alterar senha|mudar senha)\b", re.I)
