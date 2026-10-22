@@ -77,10 +77,22 @@ SNAPSHOT = r"""
   for (const e of document.querySelectorAll(sel + ', h1, h2, h3')) {
     if (!visible(e) || e.disabled || e.getAttribute('aria-disabled') === 'true') continue;
     if (/^H[123]$/.test(e.tagName)) { const t = clean(e.innerText); if (t) out.push({line: '# ' + t}); continue; }
+    // Hidden from a screen reader and with no name: the page's own decoration (Google Flights' day −/+ arrows by the
+    // date fields, which got clicked for "Search" and moved the date).
+    if (e.closest('[aria-hidden=true]') && !label(e)) continue;
     if (n >= __LIMIT__) { more++; continue; }
     n++;
     if (!e.dataset.hk) e.dataset.hk = window.__hk = (window.__hk || 0) + 1;
-    const k = kind(e), name = label(e);
+    const k = kind(e);
+    let name = label(e);
+    // A calendar day knows its date (data-iso / data-date): "18 de mar. · 7.940", not "18 7.940" (which month?).
+    const day = !e.getAttribute('aria-label') && e.closest('[data-iso], [data-date]');
+    const iso = day && /^\d{4}-\d{2}-\d{2}$/.test(day.dataset.iso || day.dataset.date) && (day.dataset.iso || day.dataset.date);
+    if (iso) {
+      const d = new Date(iso + 'T12:00').toLocaleDateString(document.documentElement.lang || undefined, {day: 'numeric', month: 'short', year: 'numeric'});
+      const rest = name.replace(/^\d{1,2}\b\s*/, '');
+      name = clean(d + (rest ? ' · ' + rest : ''));
+    }
     let line = k + ' "' + name + '"';
     if (e.tagName === 'SELECT') line += ' = "' + clean(e.options[e.selectedIndex]?.text) + '"';
     else if ((e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') && !['checkbox', 'radio', 'submit', 'button'].includes(e.type) && e.value)
