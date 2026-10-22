@@ -6,7 +6,7 @@ DevTools protocol). handsd runs these commands in a long-lived process (open con
 when it cannot, `hands` runs this file directly with the same commands: python3 hands_a11y.py <command> [args].
 DESK_AGENT names the agent (its browser profile and its own numbering); DESK_SCREENS is where screenshots go.
 """
-import collections, contextlib, glob, json, os, re, subprocess, sys, threading, time
+import collections, contextlib, glob, json, os, re, subprocess, sys, threading, time, unicodedata
 
 import hands_cdp as C
 
@@ -513,7 +513,7 @@ def state(s, arg, changes=False, shot=False):
 
 
 # Buttons a person approves first: money, deleting an account, a password (in English and Portuguese).
-RISKY = re.compile(r"\b(pay|pay now|pagar|pague|buy|buy now|comprar|compre|checkout(?!:?\s*(add )?date)|place order|fazer pedido|"
+RISKY = re.compile(r"\b(pay|pay now|pagar|pague|buy|buy now|comprar|compre|(?<!data de )checkout(?!:?\s*(add )?date)|place order|fazer pedido|"
                    r"finalizar (a )?compra|confirm (purchase|payment)|confirmar (compra|pagamento)|transfer|transferir|"
                    r"subscribe|assinar agora|delete (my )?account|excluir (minha )?conta|apagar (minha )?conta|"
                    r"change password|alterar senha|mudar senha)\b", re.I)
@@ -529,7 +529,8 @@ def label(s, n):
 def guard(s, n, approved):
     """approved: the line a person approved; the element must still be that one (the numbers may have moved on)."""
     line = label(s, n)
-    if approved is not None and approved != line:
+    same = lambda x: unicodedata.normalize("NFC", " ".join(x.split()))   # the approved line went through JSON and the chat
+    if approved is not None and same(approved) != same(line):
         raise SystemExit(f"element {n} is not the approved one anymore ({line or 'gone'}): run state again and press it")
     if approved is None and RISKY.search(line.split("] ", 1)[-1]):
         raise SystemExit(f"needs approval: {line}")
