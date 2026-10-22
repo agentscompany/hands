@@ -12,6 +12,18 @@ LIMIT = 120  # elements per read: the rest comes after scrolling
 
 # The visible elements one can act on, and the headings, in page order. Each element keeps a key (data-hk) for the
 # document's life, so the same element keeps its number between reads.
+# A point of element e's visible part that a click reaches (center first, then above and below it), or null when
+# something else covers it all. Reaching: e itself, inside it, its label, or a link to the same page (a card's photo).
+FREE = r"""const free = e => {
+    const r = e.getBoundingClientRect(), top = Math.max(r.top, 0), bottom = Math.min(r.bottom, innerHeight);
+    for (const f of [0.5, 0.25, 0.75, 0.1, 0.9]) {
+      const x = r.left + r.width / 2, y = top + (bottom - top) * f, p = document.elementFromPoint(x, y);
+      if (!p || e.contains(p) || p.contains(e) || (e.labels && [...e.labels].some(l => l.contains(p))) ||
+          (e.href && p.closest('a[href]')?.pathname === e.pathname)) return [x, y];
+    }
+    return null;
+  };"""
+
 SNAPSHOT = r"""
 (() => {
   const doc = window.__hkDoc || (window.__hkDoc = Math.random().toString(36).slice(2));
@@ -23,6 +35,7 @@ SNAPSHOT = r"""
     return s.visibility !== 'hidden' && s.display !== 'none' && +s.opacity > 0.05;
   };
   const clean = t => (t || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  __FREE__
   // The name a person sees: aria-label(ledby), the field's <label>, the text, the placeholder… the name attribute last.
   // Nothing of those (a card's link over a photo): an image's alt or an icon's label inside, else the card's text.
   const byIds = e => (e.getAttribute('aria-labelledby') || '').split(/\s+/).map(i => document.getElementById(i)?.innerText)
@@ -53,7 +66,7 @@ SNAPSHOT = r"""
               '[onclick], [contenteditable=true], summary';
   let n = 0, more = 0;
   for (const e of document.querySelectorAll(sel + ', h1, h2, h3')) {
-    if (!visible(e) || e.disabled) continue;
+    if (!visible(e) || e.disabled || e.getAttribute('aria-disabled') === 'true') continue;
     if (/^H[123]$/.test(e.tagName)) { const t = clean(e.innerText); if (t) out.push({line: '# ' + t}); continue; }
     if (n >= __LIMIT__) { more++; continue; }
     n++;
@@ -63,15 +76,14 @@ SNAPSHOT = r"""
     if (e.tagName === 'SELECT') line += ' = "' + clean(e.options[e.selectedIndex]?.text) + '"';
     else if ((e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') && !['checkbox', 'radio', 'submit', 'button'].includes(e.type) && e.value)
       line += ' = "' + (e.type === 'password' ? '••••' : clean(e.value)) + '"';
-    const r = e.getBoundingClientRect(), p = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-    if (p && !e.contains(p) && !p.contains(e) && !(e.labels && [...e.labels].some(l => l.contains(p)))) line += ' (covered)';
+    if (!free(e)) line += ' (covered)';
     out.push({key: e.dataset.hk, sig: k.split(' ')[0] + ' ' + name, line});
   }
   if (more) out.push({line: '(+' + more + ' more visible elements past the limit)'});
   if (document.documentElement.scrollHeight - scrollY - H > 40) out.push({line: '(the page goes on below: hands scroll 5 to see more, then ui again)'});
   return {head: document.title + ' — ' + location.href, doc, items: out};
 })()
-""".replace("__LIMIT__", str(LIMIT))
+""".replace("__LIMIT__", str(LIMIT)).replace("__FREE__", FREE)
 
 # The text a person reads on the page, without runs of blank lines.
 TEXT = r"""
@@ -459,7 +471,9 @@ def find(b, tid, doc, key):
     r = b.js(tid, f"""(() => {{ if (window.__hkDoc !== {json.dumps(doc)}) return 'doc';
       const e = document.querySelector('[data-hk="{int(key)}"]'); if (!e) return null;
       e.scrollIntoView({{block: 'nearest', inline: 'nearest'}});
-      const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, e.tagName]; }})()""")
+      {FREE}
+      const r = e.getBoundingClientRect(), at = free(e) || [r.left + r.width / 2, r.top + r.height / 2];
+      return [at[0], at[1], e.tagName]; }})()""")
     if r == "doc":
         raise SystemExit("the page changed: run ui (or state) again")
     if not r:

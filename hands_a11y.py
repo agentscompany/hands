@@ -10,7 +10,7 @@ import collections, contextlib, glob, json, os, re, subprocess, sys, threading, 
 
 import hands_cdp as C
 
-VERSION = "0.5.0"
+VERSION = "0.5.2"
 HOME = os.path.expanduser("~/.desk")
 LIMIT = 150  # elements per state, like hands_cdp
 os.environ["DISPLAY"] = ":1"
@@ -732,10 +732,15 @@ def keyboard(s, cmd, rest):
 
 
 def page_scroll(s, n):
-    """Scrolls the agent's page n notches (negative: up) with the mouse wheel at its middle; no real pointer."""
+    """Scrolls the agent's page n notches (negative: up) with the mouse wheel at its middle; no real pointer. The
+    agent's cursor goes to the scroll bar's thumb, as a person's would (the middle when the page doesn't scroll)."""
     b, tid = page(s)
-    w, h, sx, sy = b.js(tid, "[innerWidth, innerHeight, ...(" + C.ORIGIN + ")]")
-    with aim(s, sx + w / 2, sy + h / 2):
+    w, h, sx, sy, top, full = b.js(tid, "[innerWidth, innerHeight, ...(" + C.ORIGIN + "), scrollY, document.documentElement.scrollHeight]")
+    x, y = w / 2, h / 2
+    if full > h:
+        thumb = max(h * h / full, 20)
+        x, y = w - 6, top / (full - h) * (h - thumb) + thumb / 2
+    with aim(s, sx + x, sy + y):
         C.wheel(b, tid, w / 2, h / 2, n)
     return "ok"
 
