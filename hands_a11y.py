@@ -743,6 +743,15 @@ def page_scroll(s, n):
     agent's cursor goes to the scroll bar's thumb, as a person's would (the middle when the page doesn't scroll)."""
     b, tid = page(s)
     w, h, sx, sy, top, full = b.js(tid, "[innerWidth, innerHeight, ...(" + C.ORIGIN + "), scrollY, document.documentElement.scrollHeight]")
+    # An open dialog (a date picker, Filters) scrolls inside itself: the wheel goes over its middle, not the page's (the
+    # page behind doesn't move, and the calendar's next months never showed).
+    box = b.js(tid, """(() => { const d = [...document.querySelectorAll('dialog[open], [role=dialog], [aria-modal=true]')]
+        .map(e => e.getBoundingClientRect()).filter(r => r.width > 50 && r.height > 50 && r.bottom > 0 && r.top < innerHeight).pop();
+      return d && [(Math.max(0, d.left) + Math.min(d.right, innerWidth)) / 2, (Math.max(0, d.top) + Math.min(d.bottom, innerHeight)) / 2]; })()""")
+    if box:
+        with aim(s, sx + box[0], sy + box[1]):
+            C.wheel(b, tid, box[0], box[1], n)
+        return "ok (inside the open dialog)"
     x, y = w / 2, h / 2
     if full > h:
         thumb = max(h * h / full, 20)
