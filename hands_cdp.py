@@ -37,7 +37,8 @@ SNAPSHOT = r"""
   const clean = t => (t || '').replace(/\s+/g, ' ').trim().slice(0, 80);
   __FREE__
   // The name a person sees: aria-label(ledby), the field's <label>, the text, the placeholder… the name attribute last.
-  // Nothing of those (a card's link over a photo): an image's alt or an icon's label inside, else the card's text.
+  // Nothing of those (a card's link over a photo, a select box's typing input): an image's alt or an icon's label
+  // inside, else the card's (box's) text.
   const byIds = e => (e.getAttribute('aria-labelledby') || '').split(/\s+/).map(i => document.getElementById(i)?.innerText)
                        .filter(Boolean).join(' ');
   const inner = e => [...e.querySelectorAll('img[alt], [aria-label]')].map(x => x.alt || x.getAttribute('aria-label'))
@@ -45,7 +46,8 @@ SNAPSHOT = r"""
   const around = e => { for (let p = e.parentElement, i = 0; p && i < 3; p = p.parentElement, i++) { const t = clean(p.innerText); if (t) return t; } };
   const label = e => clean(e.getAttribute('aria-label') || byIds(e) || (e.labels && e.labels[0] && e.labels[0].innerText) ||
                            e.innerText || e.placeholder || e.title || e.alt || (e.type === 'submit' ? e.value : '') ||
-                           e.getAttribute('name') || inner(e) || (e.tagName === 'A' ? around(e) : ''));
+                           e.getAttribute('name') || inner(e) ||
+                           (e.tagName === 'A' || e.getAttribute('role') === 'combobox' ? around(e) : ''));   // a select box's input: the box's text
   const kind = e => {
     const t = e.tagName.toLowerCase(), role = e.getAttribute('role'), type = (e.type || '').toLowerCase();
     if (t === 'a') return 'link';
