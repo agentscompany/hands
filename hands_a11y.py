@@ -10,7 +10,7 @@ import collections, contextlib, glob, json, os, re, subprocess, sys, threading, 
 
 import hands_cdp as C
 
-VERSION = "0.5.3"
+VERSION = "0.5.4"
 HOME = os.path.expanduser("~/.desk")
 LIMIT = 150  # elements per state, like hands_cdp
 os.environ["DISPLAY"] = ":1"
@@ -446,7 +446,7 @@ def page(s, front=True):
         b = C.browser(st["port"])
         ids = [p["id"] for p in b.pages()]
         if st.get("own") and front and ids:
-            return b, ids[0]
+            return C.own_page(s.agent, wait=8)   # the tab in front, past about:blank and loading (a tab just opened)
         if st["tid"] in ids:
             return b, st["tid"]
         if not st.get("own"):

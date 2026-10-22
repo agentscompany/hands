@@ -43,7 +43,10 @@ SNAPSHOT = r"""
                        .filter(Boolean).join(' ');
   const inner = e => [...e.querySelectorAll('img[alt], [aria-label]')].map(x => x.alt || x.getAttribute('aria-label'))
                        .find(t => t && t.trim());
-  const around = e => { for (let p = e.parentElement, i = 0; p && i < 3; p = p.parentElement, i++) { const t = clean(p.innerText); if (t) return t; } };
+  // Only a short text around (a card's title): a long one is a whole section (a form), which named a logo link after
+  // every field in it.
+  const around = e => { for (let p = e.parentElement, i = 0; p && i < 3; p = p.parentElement, i++) {
+    const t = (p.innerText || '').replace(/\s+/g, ' ').trim(); if (t) return t.length <= 60 ? t : undefined; } };
   const label = e => clean(e.getAttribute('aria-label') || byIds(e) || (e.labels && e.labels[0] && e.labels[0].innerText) ||
                            e.innerText || e.placeholder || e.title || e.alt || (e.type === 'submit' ? e.value : '') ||
                            e.getAttribute('name') || inner(e) ||
