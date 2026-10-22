@@ -1,6 +1,6 @@
 # python3 test_hands.py: the window list, the numbering of a tree, stable numbers, change lists, and the daemon's
 # protocol (no desktop needed).
-import os, subprocess, sys, tempfile, time
+import os, shutil, subprocess, sys, tempfile, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import hands_a11y as d
@@ -83,6 +83,21 @@ for bad in ("hyper+a", "Nope", "ctrl+"):
     except SystemExit:
         pass
 print("keys: ok")
+
+# Names of links with no text (a card's link over a photo), in a headless Chrome or Chromium when there is one.
+browser = shutil.which("chromium") or shutil.which("google-chrome") or next(
+    (b for b in ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"] if os.path.exists(b)), None)
+if browser:
+    with tempfile.TemporaryDirectory() as tmp:
+        page = os.path.join(tmp, "t.html")
+        open(page, "w").write("""<span id="t1">Condo in Miami</span><a href="/1" aria-labelledby="t1"><div style="width:99px;height:50px"></div></a>
+<a href="/2"><img alt="Pool view" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="99" height="50"></a>
+<div><p>Cozy loft</p><a href="/3"><div style="width:99px;height:50px"></div></a></div><pre id="o"></pre>
+<script>o.textContent = JSON.stringify(%s.items.map(i => i.line))</script>""" % c.SNAPSHOT.strip())
+        dom = subprocess.run([browser, "--headless=new", "--disable-gpu", "--user-data-dir=" + os.path.join(tmp, "p"), "--dump-dom",
+                              "file://" + page], capture_output=True, text=True, timeout=60).stdout
+        assert '["link \\"Condo in Miami\\"","link \\"Pool view\\"","link \\"Cozy loft\\""]' in dom, dom[-300:]
+    print("link names: ok")
 
 # Turns on the real pointer and keyboard: in order of arrival; bounded; none while the person watching has control.
 # Virtual cursors: one per agent in ~/.desk/cursors.json.
