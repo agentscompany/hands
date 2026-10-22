@@ -96,11 +96,12 @@ if browser:
 <div style="position:relative"><a href="/4" style="position:absolute;inset:0">Card four</a><a href="/4?p=1" style="position:relative;display:block;width:99px;height:50px">Photo</a></div>
 <span role="checkbox" aria-disabled="true" aria-label="Past day">1</span>
 <div><div>Select State</div><input role="combobox" style="width:5px;height:20px"></div>
+<div class="row"><div><label>Subjects</label></div><div><input style="width:99px;height:20px"></div></div>
 <div><a href="/9"><div style="width:20px;height:20px"></div></a> Student Registration Form with Name, Email, Gender, Mobile number and more fields</div><pre id="o"></pre>
 <script>o.textContent = JSON.stringify(%s.items.map(i => i.line))</script>""" % c.SNAPSHOT.strip())
         dom = subprocess.run([browser, "--headless=new", "--disable-gpu", "--user-data-dir=" + os.path.join(tmp, "p"), "--dump-dom",
                               "file://" + page], capture_output=True, text=True, timeout=60).stdout
-        assert '["link \\"Condo in Miami\\"","link \\"Pool view\\"","link \\"Cozy loft\\"","link \\"Card four\\"","link \\"Photo\\"","field \\"Select State\\"","link \\"\\""]' in dom, dom[-300:]
+        assert '["link \\"Condo in Miami\\"","link \\"Pool view\\"","link \\"Cozy loft\\"","link \\"Card four\\"","link \\"Photo\\"","field \\"Select State\\"","field \\"Subjects\\"","link \\"\\""]' in dom, dom[-300:]
     print("link names: ok")
 
 # Turns on the real pointer and keyboard: in order of arrival; bounded; none while the person watching has control.

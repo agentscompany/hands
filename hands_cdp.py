@@ -47,10 +47,14 @@ SNAPSHOT = r"""
   // every field in it.
   const around = e => { for (let p = e.parentElement, i = 0; p && i < 3; p = p.parentElement, i++) {
     const t = (p.innerText || '').replace(/\s+/g, ' ').trim(); if (t) return t.length <= 60 ? t : undefined; } };
+  // A field with no name of its own: the label of its row (a form whose labels aren't tied to their inputs).
+  const rowLabel = e => { for (let p = e.parentElement, i = 0; p && i < 4; p = p.parentElement, i++) {
+    const l = [...p.querySelectorAll('label')].find(x => !x.contains(e) && !x.control); if (l) { const t = clean(l.innerText); if (t && t.length <= 40) return t; } } };
   const label = e => clean(e.getAttribute('aria-label') || byIds(e) || (e.labels && e.labels[0] && e.labels[0].innerText) ||
                            e.innerText || e.placeholder || e.title || e.alt || (e.type === 'submit' ? e.value : '') ||
                            e.getAttribute('name') || inner(e) ||
-                           (e.tagName === 'A' || e.getAttribute('role') === 'combobox' ? around(e) : ''));   // a select box's input: the box's text
+                           (e.tagName === 'A' || e.getAttribute('role') === 'combobox' ? around(e) : '') ||   // a select box's input: the box's text
+                           (/^(INPUT|TEXTAREA|SELECT)$/.test(e.tagName) || e.getAttribute('role') === 'combobox' ? rowLabel(e) : ''));
   const kind = e => {
     const t = e.tagName.toLowerCase(), role = e.getAttribute('role'), type = (e.type || '').toLowerCase();
     if (t === 'a') return 'link';
