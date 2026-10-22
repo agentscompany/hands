@@ -10,7 +10,7 @@ import collections, contextlib, glob, json, os, re, subprocess, sys, threading, 
 
 import hands_cdp as C
 
-VERSION = "0.5.2"
+VERSION = "0.5.3"
 HOME = os.path.expanduser("~/.desk")
 LIMIT = 150  # elements per state, like hands_cdp
 os.environ["DISPLAY"] = ":1"
@@ -565,10 +565,16 @@ def press(s, n, approved=None):
     guard(s, n, approved)
     if (s.last or {}).get("kind") == "cdp":   # through the page's own input: no real pointer, no turn
         b, st, _, x, y, _, at = page_element(s, n)
+        before = {p["id"] for p in b.pages()}
         with aim(s, *at):
             C.click(b, st["tid"], x, y)
         d = b.dialogs.get(st["tid"])
-        return "ok" + (f"; {C.dialog_text(d)}" if d else effect(s))
+        out = "ok" + (f"; {C.dialog_text(d)}" if d else effect(s))
+        new = [p for p in b.pages() if p["id"] not in before]
+        if new:   # the click opened a tab (target=_blank): work on it from now on, and say so
+            s.last = {"kind": "cdp", "port": b.port, "tid": new[0]["id"], "doc": None, "own": st.get("own", True), "refs": {}}
+            out = f'ok; opened a new tab "{new[0].get("title") or new[0].get("url", "")}" and it is the one in use now: run ui to read it'
+        return out
     st, o = element(s, n)
     with ATSPI:
         c = center(o)
