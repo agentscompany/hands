@@ -572,8 +572,14 @@ def set_value(b, tid, doc, key, tag, text):
         if not ok:
             raise SystemExit(f'no option "{text}" in that menu')
         return
-    b.js(tid, f"""(() => {{ const e = document.querySelector('[data-hk="{int(key)}"]'); e.focus();
-      if (e.select) e.select(); else document.execCommand('selectAll'); }})()""")
+    # The click before this may have opened an overlay that moved the focus to its own field (Google Flights' "De onde?"
+    # opens a dialog with a new input): type there, not back into the covered one (the text got lost).
+    time.sleep(0.2)
+    b.js(tid, f"""(() => {{ const e = document.querySelector('[data-hk="{int(key)}"]'), a = document.activeElement;
+      const moved = a && a !== e && a !== window.__hkPrev && (a.isContentEditable || a.tagName === 'TEXTAREA' ||
+        (a.tagName === 'INPUT' && !/^(button|submit|reset|checkbox|radio|file|hidden|range|color|image)$/.test(a.type)));
+      const t = moved ? a : e; t.focus();
+      if (t.select) t.select(); else document.execCommand('selectAll'); }})()""")
     b.call(tid, "Input.insertText", text=text)
 
 

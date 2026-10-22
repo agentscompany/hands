@@ -597,6 +597,7 @@ def set_text(s, n, text):
         b, st, key, x, y, tag, at = page_element(s, n)
         with aim(s, *at):
             if tag != "SELECT":
+                b.js(st["tid"], "void (window.__hkPrev = document.activeElement)")
                 C.click(b, st["tid"], x, y)
             C.set_value(b, st["tid"], st["doc"], key, tag, text)
         return "ok" + effect(s)
