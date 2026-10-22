@@ -172,5 +172,6 @@ try:
 except SystemExit as e:
     assert str(e) == 'needs approval: [2] button "Pay now"', e
 assert not d.RISKY.search('button "5, Friday, February 2027. Available. Select as checkout date. Higher price."')
-assert d.RISKY.search('button "Checkout"')
+assert not d.RISKY.search('button "Change dates; Check-in: Add date; Checkout: Add date"')
+assert d.RISKY.search('button "Checkout"') and d.RISKY.search('button "Proceed to checkout"')
 print("approval: ok")
